@@ -261,12 +261,7 @@ func (im *importer) optionType(s *openapi.Schema) definitions.TypeRef {
 // jsonMedia reports whether a media type carries JSON. Jellyfin lists
 // text/json, application/*+json and profile variants; Emby pairs every JSON
 // body with an application/xml twin.
-func jsonMedia(ct string) bool {
-	ct = strings.ToLower(strings.TrimSpace(ct))
-	base := strings.TrimSpace(strings.SplitN(ct, ";", 2)[0])
-
-	return base == "application/json" || base == "text/json" || strings.HasSuffix(base, "+json")
-}
+func jsonMedia(ct string) bool { return openapi.JSONMedia(ct) }
 
 func xmlMedia(ct string) bool {
 	ct = strings.ToLower(ct)
@@ -276,16 +271,7 @@ func xmlMedia(ct string) bool {
 // pickJSON returns the JSON media type to name in the definitions: plain
 // application/json when listed, else the first JSON type.
 func pickJSON(content map[string]*openapi.MediaType) (string, bool) {
-	if _, ok := content["application/json"]; ok {
-		return "application/json", true
-	}
-	for _, ct := range openapi.SortedKeys(content) {
-		if jsonMedia(ct) {
-			return ct, true
-		}
-	}
-
-	return "", false
+	return openapi.PickJSON(content)
 }
 
 func (im *importer) requestBody(method, path, owner string, rb *openapi.RequestBody) *definitions.Body {
@@ -343,6 +329,10 @@ func (im *importer) responseBody(method, path, owner string, op *openapi.Operati
 			// file, and so is XML on its own (Emby's DLNA descriptions)
 			if other == "" {
 				other = openapi.SortedKeys(resp.Content)[0]
+			}
+			// text a workaround says is short enough to hold: read whole, where any other answer that is not JSON is a file
+			if resp.Content[other].Text {
+				return &definitions.Body{ContentType: other, Type: definitions.TypeRef{Type: definitions.String}}
 			}
 			return &definitions.Body{ContentType: other, Type: definitions.TypeRef{Type: definitions.RawFile}}
 		}

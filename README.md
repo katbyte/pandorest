@@ -121,7 +121,7 @@ A name the config gets wrong fails the import rather than doing nothing: a `Keep
 
 - **Names.** With `OperationIDNaming` a method is named after its operationId (`GetItems`; TMDB's `movie-details` is `MovieDetails`). With `PathNaming`, for operationIds that are machine-made, lossy or missing, it is named after the method and path: `GET /Items/{Id}/Similar` is `GetItemsByIdSimilar`. Schema names lose their dots and underscores (`QueryResult_BaseItemDto` is `QueryResultBaseItemDto`); fields keep the API's spelling (`Id`, `ImdbId`), and a field with a leading underscore beside its plain twin takes an `Underscore` prefix.
 - **Types.** `Integer` (int), `Integer64`, `Float`, `Double`, `String`, `Boolean`, `List`, `Dictionary`, `Reference` to a model or enum, `RawObject` for JSON of no declared shape (untyped objects, unions, "binary" JSON documents), `Any`, and `RawFile` for bodies that are not JSON. An inline object becomes a model named after its owner and field; an operation's inline request and response are named after the operation.
-- **Operations.** Path parameters in template order; query and header parameters as options, with lists comma-separated or one key per value as the document says, an object sent as one JSON string or, in `deepObject` style, as `name[key]=value` per key, and a header named `Accept`, `Content-Type` or `Authorization` ignored, as OpenAPI says (but for an `Accept` a workaround adds); the JSON request body, a model whether declared or inline, or raw bytes; the success response (JSON, a file, or nothing); `ExpectedStatusCodes` from the 2xx responses; and `Pageable` for a list.
+- **Operations.** Path parameters in template order; query and header parameters as options, with lists comma-separated or one key per value as the document says, an object sent as one JSON string or, in `deepObject` style, as `name[key]=value` per key, and a header named `Accept`, `Content-Type` or `Authorization` ignored, as OpenAPI says (but for an `Accept` a workaround adds); the JSON request body, a model whether declared or inline, or raw bytes; the success response (JSON, a file, text a workaround says to read whole, or nothing); `ExpectedStatusCodes` from the 2xx responses; and `Pageable` for a list.
 - **Grouping.** One definitions file per spec tag, holding the tag's operations and the models and enums only its operations use. Anything more than one tag uses is in `Common.json`. There is one Go package per service, not per tag, because shared models would otherwise tie every package to every other.
 
 The importer is strict. An undeclared path parameter, a GET that does not say what it answers, a duplicate operationId, two operations that would make the same method name, an operation without a tag or a success response, or two schemas that would declare the same Go type fail the import with every problem listed, rather than being guessed at.
@@ -131,6 +131,34 @@ The importer is strict. An undeclared path parameter, a GET that does not say wh
 A document bug is fixed with a workaround, kept in the repository that vendors the document: a type with a `Name` (`emby-search-term`), the `Service` it is for, the `Bug` it fixes in a sentence, and `Apply`, which patches the loaded document. `importer/workarounds` has the interface and the helpers they share (`Operation`, `JSONResponse`, `AddParameters`, `Property`).
 
 `Apply` must first check the bug is there, and return an error when it is not: the parameter it adds already declared, the operation gone, the schema already carrying the field. A refreshed document that fixes the bug then fails the import, naming the workaround to delete, instead of the workaround silently doing nothing forever. `workarounds.Verify` is the test for that, one call in the repository's own tests: every workaround must apply to its vendored document, fail when applied a second time, and return rather than panic on a document that has lost its 200 responses.
+
+#### Ready-made workarounds
+
+The same few bugs are in most documents, so the workarounds for them are here, ready-made: a repository says which operations and why, and the patching, and the check that the bug is still there, are written once. Each is a `Workaround` like one written by hand and passes `Verify` the same way.
+
+```go
+var All = []workarounds.Workaround{
+	workarounds.UndeclaredAnswers(workarounds.About{Name: "sonarr-undeclared-responses", Service: "sonarr", Bug: "fourteen GETs declare a 200 with no content, so nothing says whether they answer JSON or a file"}, map[string]workarounds.Answer{
+		"GET /api/v3/filesystem":          workarounds.JSON(),
+		"GET /api/v3/customformat/schema": workarounds.ListOf("CustomFormatSpecificationSchema"),
+		"GET /api/v3/log/file/{filename}": workarounds.File("text/plain"),
+	}),
+	workarounds.WrongAnswers(workarounds.About{Name: "emby-parent-path-text", Service: "emby", Bug: "GET /Environment/ParentPath declares a JSON string; the server answers the bare path as text"}, map[string]workarounds.Correction{
+		"GET /Environment/ParentPath": {Declared: workarounds.JSONString(), Answers: workarounds.Text("text/plain")},
+	}),
+}
+```
+
+| Workaround | The bug it is for | It fails when |
+|---|---|---|
+| `UndeclaredAnswers` | operations declare a success with no content, so nothing says whether they answer JSON, and in what shape, or a file | one declares its answer now |
+| `WrongAnswers` | operations declare one answer and the server gives another: a JSON string sent as bare text, one record where a list is sent | one no longer declares what its correction says it does |
+| `WrongStatus` | operations are documented as one status and answer another with the same body: creates that answer 201 where the document says 200 | one no longer documents the declared status, or documents the other |
+| `UndeclaredParameters` | operations read a parameter the document leaves out | one declares it now |
+| `UndeclaredProperties` | the server sends, and reads back, fields a schema leaves out | the schema declares one now |
+| `NotAPI` | the document lists paths that are not the API's: the web interface's page, its files, its login form | one is not in the document |
+
+`ListDeclaredAsOne("Schema")` is the commonest correction, one record declared where a list of them is sent. An answer is one of `JSON()` (no declared shape, held raw), `JSONString()`, `Model("Schema")`, `ListOf("Schema")`, `Shape(schema)` for a document that keeps its schemas with its operations, `File("media/type")` and `Text("media/type")`. A file is left for its caller to read and close. Text is short text that is not JSON, a path or a version, read whole: the method's `Model` is a `*string` holding it as it was sent, whatever the server calls it, since a server that sends bare text may label it JSON. Only a workaround makes an answer text. A log is text too, and is a file.
 
 A workaround can also name an operation, by setting its `Name`: the method it gets in place of the one its path or operationId would make. That is how two paths that make the same name are told apart (`GET /audit` beside `GET /api/audit`, with `/api` left out of names), since the import fails on the clash rather than number the second.
 

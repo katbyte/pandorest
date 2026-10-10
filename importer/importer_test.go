@@ -542,6 +542,44 @@ func TestAcceptOption(t *testing.T) {
 	}
 }
 
+// An answer a workaround says is short text is read whole into a string,
+// where any other answer that is not JSON is a file, and the call asks for
+// its type.
+func TestTextAnswer(t *testing.T) {
+	t.Parallel()
+
+	svc, err := importMini(t, func(s *openapi.Spec) {
+		w := workarounds.WrongAnswers(workarounds.About{Name: "mini-item-text", Service: "mini", Bug: "the item is sent as text"}, map[string]workarounds.Correction{
+			"GET /Items/{itemId}": {Declared: workarounds.Model("Item"), Answers: workarounds.Text("text/plain")},
+		})
+		if err := w.Apply(s); err != nil {
+			t.Error(err)
+		}
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	answer := func(name string) *definitions.Body {
+		return (*find(svc.Operations(), func(o *definitions.Operation) bool { return o.Name == name })).Response
+	}
+
+	text := answer("GetItem")
+	if text.ContentType != "text/plain" || text.Type.Type != definitions.String || !text.Text() || text.AsksFor() != "text/plain" {
+		t.Errorf("an answer of text = %+v, want a string of text/plain", text)
+	}
+
+	// a file is still a file, and JSON asks for nothing of its own
+	file := answer("GetItemImage")
+	if file.Type.Type != definitions.RawFile || file.Text() || file.AsksFor() != "image/*" {
+		t.Errorf("a file = %+v", file)
+	}
+	list := answer("GetItems")
+	if list.Text() || list.AsksFor() != "" {
+		t.Errorf("a JSON answer = %+v", list)
+	}
+}
+
 // What the importer warns about and skips rather than failing on.
 func TestImportWarnings(t *testing.T) {
 	t.Parallel()

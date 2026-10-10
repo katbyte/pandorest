@@ -109,7 +109,7 @@ func TestVerify(t *testing.T) {
 		{"the bug is not there", []workarounds.Workaround{fake{"mini-gone", "mini", "a bug", func(spec *openapi.Spec) error {
 			_, err := workarounds.Operation(spec, "GET", "/Gone")
 			return err
-		}}}, "mini-gone: the bug is not in the vendored document: GET /Gone is not in the document"},
+		}}}, "mini-gone: it does not apply to the vendored document, so the bug is not there or the workaround is written wrong: GET /Gone is not in the document"},
 		{"would not notice a fix", []workarounds.Workaround{fake{"mini-blind", "mini", "a bug", noop}}, "mini-blind: applying it again succeeded, so it would not notice the bug being fixed"},
 		{"panics without a 200", []workarounds.Workaround{fake{"mini-panics", "mini", "a bug", func(spec *openapi.Spec) error {
 			media := spec.Operation("GET", "/Things").Responses["200"].Content["application/json"]

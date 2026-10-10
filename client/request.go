@@ -317,6 +317,36 @@ func held(resp *http.Response, body []byte) *Response {
 // Unmarshal decodes the JSON body into model, leaving the body readable
 // again. An empty body leaves model as it is.
 func (r *Response) Unmarshal(model any) error {
+	if err := r.hold(); err != nil {
+		return err
+	}
+
+	if len(bytes.TrimSpace(r.body)) == 0 {
+		return nil
+	}
+	if err := json.Unmarshal(r.body, model); err != nil {
+		return fmt.Errorf("%s %s: the answer is not what this client reads there (%w): %s", r.Request.Method, r.Request.URL.Path, err, chttp.Preview(r.body))
+	}
+
+	return nil
+}
+
+// Text sets into to the body as it was sent, for an operation that answers
+// short text and not JSON, leaving the body readable again. What the server
+// calls the answer is not looked at: one that sends bare text may label it
+// JSON.
+func (r *Response) Text(into *string) error {
+	if err := r.hold(); err != nil {
+		return err
+	}
+	*into = string(r.body)
+
+	return nil
+}
+
+// hold reads the body whole, if it has not been, and leaves it readable
+// again.
+func (r *Response) hold() error {
 	if !r.held {
 		body, err := io.ReadAll(io.LimitReader(r.Body, DefaultMaxResponse))
 		_ = r.Body.Close()
@@ -326,13 +356,6 @@ func (r *Response) Unmarshal(model any) error {
 		r.body, r.held = body, true
 	}
 	r.Body = io.NopCloser(bytes.NewReader(r.body))
-
-	if len(bytes.TrimSpace(r.body)) == 0 {
-		return nil
-	}
-	if err := json.Unmarshal(r.body, model); err != nil {
-		return fmt.Errorf("%s %s: the answer is not what this client reads there (%w): %s", r.Request.Method, r.Request.URL.Path, err, chttp.Preview(r.body))
-	}
 
 	return nil
 }

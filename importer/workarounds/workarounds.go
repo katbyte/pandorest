@@ -97,7 +97,7 @@ func verifyOne(w Workaround, load func(service string) (*openapi.Spec, error)) e
 		return fmt.Errorf("loading the %s document: %w", w.Service(), err)
 	}
 	if err := w.Apply(spec); err != nil {
-		return fmt.Errorf("the bug is not in the vendored document: %w", err)
+		return fmt.Errorf("it does not apply to the vendored document, so the bug is not there or the workaround is written wrong: %w", err)
 	}
 	if err := w.Apply(spec); err == nil {
 		return errors.New("applying it again succeeded, so it would not notice the bug being fixed")

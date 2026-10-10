@@ -184,6 +184,46 @@ func TestAcceptOption(t *testing.T) {
 	}
 }
 
+// An operation whose answer is text read whole holds it in its model as it
+// was sent, asks for its type, and has a test that sends text labelled JSON.
+//
+//nolint:paralleltest // writes the testdata package the other tests would remove
+func TestTextAnswer(t *testing.T) {
+	spec, err := openapi.Parse([]byte(miniSpec))
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := workarounds.WrongAnswers(workarounds.About{Name: "mini-name-text", Service: "mini", Bug: "the name is sent bare"}, map[string]workarounds.Correction{
+		"GET /Name": {Declared: workarounds.JSONString(), Answers: workarounds.Text("text/plain")},
+	})
+	if err := text.Apply(spec); err != nil {
+		t.Fatal(err)
+	}
+	svc, err := importer.FromSpec(miniConfig, spec, []string{"mini-fix"}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	dir := generateInModule(t, svc, generator.Options{})
+	goTool(t, dir, "vet")
+	goTool(t, dir, "test")
+
+	method := read(t, dir, "sync_method_getname.go")
+	for _, want := range []string{"// The operation answers text (text/plain), which Model holds as it was sent.", "\tModel        *string\n", `Accept: "text/plain",`, "if err = resp.Text(result.Model); err != nil {"} {
+		if !strings.Contains(method, want) {
+			t.Errorf("GetName has no %q:\n%s", want, method)
+		}
+	}
+	if strings.Contains(method, "Unmarshal") || strings.Contains(method, "StreamResponse") {
+		t.Errorf("GetName decodes or streams its text:\n%s", method)
+	}
+
+	test := read(t, dir, "sync_method_getname_test.go")
+	if !strings.Contains(test, `newOperationServer(t, 200, "application/json", "some text, as sent\n")`) || !strings.Contains(test, `*result.Model != "some text, as sent\n"`) || strings.Contains(test, "does not decode") {
+		t.Errorf("GetName's test:\n%s", test)
+	}
+}
+
 //nolint:paralleltest // writes the testdata package the other test would remove
 func TestGenerate(t *testing.T) {
 	dir := generateInModule(t, miniDefinitions(t), generator.Options{Notes: "Dates are strings.\n\nIds are too."})

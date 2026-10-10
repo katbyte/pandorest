@@ -231,6 +231,29 @@ func TestRequest(t *testing.T) {
 	}
 }
 
+// Text is the body as it was sent, whatever the server calls it, and leaves
+// the body to be read again.
+func TestText(t *testing.T) {
+	t.Parallel()
+
+	c, _ := serve(t, arr, client.APIKey("secret"), func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json; charset=utf-8")
+		_, _ = io.WriteString(w, " /media\n")
+	})
+	resp, err := execute(t, c, client.RequestOptions{Accept: "text/plain", ExpectedStatusCodes: []int{http.StatusOK}, HTTPMethod: http.MethodGet, Path: "/path"})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var text string
+	if err := resp.Text(&text); err != nil || text != " /media\n" {
+		t.Errorf("Text = %q, %v", text, err)
+	}
+	if again, _ := io.ReadAll(resp.Body); string(again) != " /media\n" {
+		t.Errorf("the body read again = %q", again)
+	}
+}
+
 // A request asks for what its operation is documented to answer: JSON alone
 // unless that is something else, which is then asked for first with JSON
 // after it. A server may choose its answer by the header, and one that tests
