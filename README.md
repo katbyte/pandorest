@@ -108,6 +108,7 @@ A name the config gets wrong fails the import rather than doing nothing: a `Keep
 | `definitions` | `api-defs/` + its models | the contract: JSON per version per tag, load, save, validate |
 | `differ` | `data-api-differ` | reports operations, options, bodies, models, fields and enum values added, removed or changed |
 | `generator` | `generator-go-sdk` | writes the package from definitions only |
+| `sweep` | | the read sweep: every GET called on the generated SDK against a real server, for a repository's live tests |
 | the base client (yours) | `go-azure-sdk/sdk/client` | the hand-written client a repository's generated packages share |
 
 ## Importing
@@ -119,13 +120,15 @@ A name the config gets wrong fails the import rather than doing nothing: a `Keep
 - **Operations.** Path parameters in template order; query and header parameters as options, with lists comma-separated or one key per value as the document says, an object sent as one JSON string or, in `deepObject` style, as `name[key]=value` per key, and a header named `Accept`, `Content-Type` or `Authorization` ignored, as OpenAPI says; the JSON request body, a model whether declared or inline, or raw bytes; the success response (JSON, a file, or nothing); `ExpectedStatusCodes` from the 2xx responses; and `Pageable` for a list.
 - **Grouping.** One definitions file per spec tag, holding the tag's operations and the models and enums only its operations use. Anything more than one tag uses is in `Common.json`. There is one Go package per service, not per tag, because shared models would otherwise tie every package to every other.
 
-The importer is strict. An undeclared path parameter, a GET that does not say what it answers, a duplicate operationId, an operation without a tag or a success response, or two schemas that would declare the same Go type fail the import with every problem listed, rather than being guessed at.
+The importer is strict. An undeclared path parameter, a GET that does not say what it answers, a duplicate operationId, two operations that would make the same method name, an operation without a tag or a success response, or two schemas that would declare the same Go type fail the import with every problem listed, rather than being guessed at.
 
 ### Workarounds
 
 A document bug is fixed with a workaround, kept in the repository that vendors the document: a type with a `Name` (`emby-search-term`), the `Service` it is for, the `Bug` it fixes in a sentence, and `Apply`, which patches the loaded document. `importer/workarounds` has the interface and the helpers they share (`Operation`, `JSONResponse`, `AddParameters`, `Property`).
 
 `Apply` must first check the bug is there, and return an error when it is not: the parameter it adds already declared, the operation gone, the schema already carrying the field. A refreshed document that fixes the bug then fails the import, naming the workaround to delete, instead of the workaround silently doing nothing forever. `workarounds.Verify` is the test for that, one call in the repository's own tests: every workaround must apply to its vendored document, fail when applied a second time, and return rather than panic on a document that has lost its 200 responses.
+
+A workaround can also name an operation, by setting its `Name`: the method it gets in place of the one its path or operationId would make. That is how two paths that make the same name are told apart (`GET /audit` beside `GET /api/audit`, with `/api` left out of names), since the import fails on the clash rather than number the second.
 
 Workarounds are for the document's shape, what an operation takes and answers. Behaviour no document could express (a filter the server silently drops, an add it loses mid-refresh) belongs in the hand-written layer over the SDK, next to the live test that found it.
 
@@ -191,6 +194,25 @@ all.Items        // every page
 Every operation gets a test against a canned server, generated from its definition: it calls the method with a sample value for every path parameter (a slash in string ones, to prove escaping) and every option, and checks the server saw the method, the escaped path, each option on the wire, the headers, and the body and its content type. The server answers the first documented status with a sample of the documented response, which must decode (or stream, for a file); then an answer that does not decode, and a status the operation does not document, must both come back as errors with the response. A list's `Complete` must walk its pages. That exercises about 95% of a generated package without a server.
 
 They prove the generated code does what the definitions say, not that the definitions are right about the server: that takes tests against the real thing.
+
+### The read sweep
+
+The generated tests cannot say whether the document is right about the server. The `sweep` package is the test that can, for a repository's live suite: it calls every GET in a service's definitions on the generated client against a real server, with arguments resolved from the suite's fixtures, and holds each answer to three things. It decodes; it carries something, because an empty list decodes into any model; and no object in it is lost whole, which is how a model whose fields do not match the server shows up.
+
+```go
+sweep.Sweep{
+	Definitions: defs,   // definitions.Load of the service's directory
+	Client:      sdk,    // the generated client
+	StatusCode:  client.StatusCode,
+	Fixtures:    sweep.Fixtures{Path: map[string]string{"Items/Id": movieID}, Always: map[string]string{"UserId": userID}},
+	Cases: map[string]sweep.Case{
+		"GetLiveTvTuners": {Skip: "needs a tuner"},
+		"GetItemsByIdThemeMedia": {Empty: "the fixtures have no theme songs"},
+	},
+}.Run(t)
+```
+
+Every operation either answers with something or has a `Case` that says why not: skipped, an error status, an answer that does not decode, or an empty one, each with its reason. A case whose operation starts answering fails the sweep, so a stale one is removed, the way a stale workaround is; so does a case that names no GET. A GET the importer adds is swept on the next run with nothing to write. `Strict` also fails any key the model has no field for, for a server whose document is meant to be complete.
 
 ### The base client
 

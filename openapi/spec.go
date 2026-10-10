@@ -46,6 +46,11 @@ type Operation struct {
 	Parameters  []*Parameter         `json:"parameters"`
 	RequestBody *RequestBody         `json:"requestBody"`
 	Responses   map[string]*Response `json:"responses"`
+
+	// Name is the Go method a workaround gives the operation, in place of
+	// the one its path or its operationId would make: how two operations
+	// that make the same name are told apart. No document carries it.
+	Name string `json:"-"`
 }
 
 // Parameter is a path, query or header parameter.

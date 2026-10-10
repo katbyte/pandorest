@@ -303,6 +303,22 @@ func TestImportFailures(t *testing.T) {
 			want:  "GET /Items/{itemId}: declares no response content",
 		},
 		{
+			// two ids that are not the same and make the same Go name
+			name:  "two operations that make one method name",
+			patch: func(s *openapi.Spec) { s.Operation("POST", "/Items/{itemId}").OperationID = "get-item" },
+			want:  "POST /Items/{itemId}: makes the method GetItem, which GET /Items/{itemId} makes too: give one of them a name of its own with a workaround",
+		},
+		{
+			name:  "a workaround's name that is not a Go name",
+			patch: func(s *openapi.Spec) { s.Operation("POST", "/Items/{itemId}").Name = "update item" },
+			want:  `POST /Items/{itemId}: a workaround names it "update item", which is not an exported Go name`,
+		},
+		{
+			name:  "a workaround's name that is not exported",
+			patch: func(s *openapi.Spec) { s.Operation("POST", "/Items/{itemId}").Name = "updateItem" },
+			want:  `POST /Items/{itemId}: a workaround names it "updateItem", which is not an exported Go name`,
+		},
+		{
 			name:  "duplicate operationId",
 			patch: func(s *openapi.Spec) { s.Operation("POST", "/Items/{itemId}").OperationID = "GetItem" },
 			want:  `operationId "GetItem" is also`,
@@ -948,4 +964,42 @@ func TestServiceOptions(t *testing.T) {
 			}
 		}
 	})
+}
+
+// Two paths that make one method name fail the import rather than have the
+// second numbered, and a workaround settles it by naming one: the name is the
+// method's, and its inline answer's.
+func TestNameClash(t *testing.T) {
+	t.Parallel()
+
+	// a page outside the prefix, beside the API's own list under it
+	withPage := func(t *testing.T, name string) (*definitions.Service, error) {
+		t.Helper()
+
+		spec, err := openapi.Parse([]byte(arrSpec))
+		if err != nil {
+			t.Fatal(err)
+		}
+		spec.Paths["/history"] = &openapi.PathItem{Get: &openapi.Operation{Tags: []string{"Pages"}, Name: name, Responses: map[string]*openapi.Response{
+			"200": {Content: map[string]*openapi.MediaType{"application/json": {Schema: &openapi.Schema{Type: openapi.TypeObject, Properties: map[string]*openapi.Schema{"title": {Type: openapi.TypeString}}}}}},
+		}}}
+
+		return FromSpec(arrConfig, spec, nil, nil)
+	}
+
+	if _, err := withPage(t, ""); err == nil || !strings.Contains(err.Error(), "GET /history: makes the method GetHistory, which GET /api/v3/history makes too") {
+		t.Errorf("two paths that make GetHistory = %v", err)
+	}
+
+	svc, err := withPage(t, "GetHistoryPage")
+	if err != nil {
+		t.Fatal(err)
+	}
+	page := find(svc.Operations(), func(o *definitions.Operation) bool { return o.Key() == "GET /history" })
+	if page == nil || (*page).Name != "GetHistoryPage" || (*page).Response.Type.String() != "Reference(GetHistoryPageResponse)" {
+		t.Errorf("the named operation = %+v", page)
+	}
+	if list := find(svc.Operations(), func(o *definitions.Operation) bool { return o.Key() == "GET /api/v3/history" }); list == nil || (*list).Name != "GetHistory" {
+		t.Errorf("the other operation = %+v", list)
+	}
 }

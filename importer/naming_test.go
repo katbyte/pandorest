@@ -109,21 +109,6 @@ func TestSplitTemplate(t *testing.T) {
 	}
 }
 
-func TestUniqueNamer(t *testing.T) {
-	t.Parallel()
-
-	var warned []string
-	u := newUniqueNamer(func(s string) { warned = append(warned, s) })
-	for i, want := range []string{"GetX", "GetX2", "GetX3"} {
-		if got := u.name("GetX", "ctx"); got != want {
-			t.Errorf("name %d = %q, want %q", i, got, want)
-		}
-	}
-	if len(warned) != 2 {
-		t.Errorf("warnings = %v, want 2", warned)
-	}
-}
-
 func TestCleanText(t *testing.T) {
 	t.Parallel()
 

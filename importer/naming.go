@@ -1,7 +1,6 @@
 package importer
 
 import (
-	"fmt"
 	"go/token"
 	"strings"
 	"unicode"
@@ -136,32 +135,6 @@ func splitTemplate(seg string) []templatePiece {
 	}
 
 	return out
-}
-
-// uniqueNamer hands out names, appending a numeric suffix on a clash and
-// reporting it through warn so the importer log shows what happened.
-type uniqueNamer struct {
-	seen map[string]bool
-	warn func(string)
-}
-
-func newUniqueNamer(warn func(string)) *uniqueNamer {
-	return &uniqueNamer{seen: map[string]bool{}, warn: warn}
-}
-
-func (u *uniqueNamer) name(want, context string) string {
-	if !u.seen[want] {
-		u.seen[want] = true
-		return want
-	}
-	for i := 2; ; i++ {
-		n := fmt.Sprintf("%s%d", want, i)
-		if !u.seen[n] {
-			u.seen[n] = true
-			u.warn(fmt.Sprintf("name clash: %s renamed to %s (%s)", want, n, context))
-			return n
-		}
-	}
 }
 
 // cleanText normalises a description for the definitions: no carriage

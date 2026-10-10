@@ -1,3 +1,9 @@
+## v0.2.0 (2026-10-10)
+
+- add `sweep`: the read sweep a repository runs against a real server, every GET in a service's definitions called on the generated client and its answer held to decoding, carrying something and losing no object whole; one package made of the copies in embyfin-mcp, sonarr-mcp, radarr-mcp and prowlarr-mcp, with radarr's check for undeclared fields as `Strict` and prowlarr's `Sometimes`
+- importer (breaking): two operations that make the same method name fail the import, where the second used to be numbered (`GetAudit2`) with a warning; which one took the number followed the order of the paths, so a refreshed document could rename a method
+- a workaround can name an operation (`Name` on `openapi.Operation`), which is how such a clash is settled
+
 ## v0.1.0 (2026-10-09)
 
 - initial release: the SDK generator extracted from embyfin-mcp's `sdk/pandorest`, where it writes the Emby, Jellyfin and TMDB SDKs, so the copies in sonarr-mcp, radarr-mcp and prowlarr-mcp can be replaced by one

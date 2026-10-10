@@ -2,6 +2,7 @@ package importer
 
 import (
 	"fmt"
+	"go/token"
 	"net/http"
 	"regexp"
 	"slices"
@@ -18,7 +19,7 @@ var pathParamRe = regexp.MustCompile(`\{([^}]+)\}`)
 // importOperations builds every operation, grouped by tag.
 func (im *importer) importOperations() map[string]*definitions.Group {
 	groups := map[string]*definitions.Group{}
-	namer := newUniqueNamer(im.warn)
+	names := map[string]string{} // each method name, and the operation that made it
 	operationIDs := map[string]string{}
 
 	for _, path := range openapi.SortedKeys(im.spec.Paths) {
@@ -41,7 +42,15 @@ func (im *importer) importOperations() map[string]*definitions.Group {
 			} else if g.Tag != tag {
 				im.fail(fmt.Sprintf("%s: tags %q and %q both make group %s", where, g.Tag, tag, name))
 			}
-			g.Operations = append(g.Operations, im.operation(namer, m.Method, path, op))
+			o := im.operation(m.Method, path, op)
+			// two operations that make one name are a failure, not a second
+			// one numbered: which would get the number follows the order of
+			// the paths, so a refreshed document could rename a method
+			if prev, ok := names[o.Name]; ok {
+				im.fail(fmt.Sprintf("%s: makes the method %s, which %s makes too: give one of them a name of its own with a workaround (the operation's Name), or take one out", where, o.Name, prev))
+			}
+			names[o.Name] = where
+			g.Operations = append(g.Operations, o)
 		}
 	}
 
@@ -76,14 +85,20 @@ func (im *importer) pathName(method, path string) string {
 	return pathMethodName(method, path, im.cfg.PathPrefix, im.cfg.Words)
 }
 
-func (im *importer) operation(namer *uniqueNamer, method, path string, op *openapi.Operation) definitions.Operation {
+func (im *importer) operation(method, path string, op *openapi.Operation) definitions.Operation {
 	want := im.pathName(method, path)
-	if im.cfg.Naming == config.OperationIDNaming {
-		if op.OperationID == "" {
-			im.fail(fmt.Sprintf("%s %s: has no operationId to name its method after", method, path))
-		} else {
-			want = camel(op.OperationID)
+	switch {
+	case op.Name != "":
+		// a workaround named it
+		want = op.Name
+		if !token.IsIdentifier(want) || !token.IsExported(want) {
+			im.fail(fmt.Sprintf("%s %s: a workaround names it %q, which is not an exported Go name", method, path, want))
 		}
+	case im.cfg.Naming != config.OperationIDNaming:
+	case op.OperationID == "":
+		im.fail(fmt.Sprintf("%s %s: has no operationId to name its method after", method, path))
+	default:
+		want = camel(op.OperationID)
 	}
 
 	description := cleanText(op.Summary)
@@ -91,7 +106,7 @@ func (im *importer) operation(namer *uniqueNamer, method, path string, op *opena
 		description = cleanText(op.Description)
 	}
 	o := definitions.Operation{
-		Name:        namer.name(want, method+" "+path),
+		Name:        want,
 		OperationID: op.OperationID,
 		Method:      method,
 		Path:        path,
@@ -165,7 +180,7 @@ func (im *importer) operation(namer *uniqueNamer, method, path string, op *opena
 	// a path-built name (GetN3TvBySeriesIdSeasonBySeasonNumber) is what that
 	// naming is there to avoid
 	owner := im.pathName(method, path)
-	if im.cfg.Naming == config.OperationIDNaming {
+	if im.cfg.Naming == config.OperationIDNaming || op.Name != "" {
 		owner = o.Name
 	}
 	o.Request = im.requestBody(method, path, owner, op.RequestBody)
