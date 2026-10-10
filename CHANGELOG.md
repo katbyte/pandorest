@@ -1,3 +1,9 @@
+## v0.3.1 (2026-10-10)
+
+- a service words the generated `New` without copying it: `Credential` is what it calls its credential ("API key" names the parameter `apiKey` and refuses an empty one with "API key is required"), and `NewDoc` is New's documentation; a `Client` source is now only for a `New` of another shape
+- the generated `doc.go` no longer starts with the generated header, so that a linter sees the package comment in it: a file written by hand beside the generated ones (the service's own) was otherwise told its package has none, and every repository carried an exception for it. `generator.Generated` still knows `doc.go` as generated; a test that tells generated files by `generator.Header` must use it instead
+- `client.Service.Example` can be a host alone (`nas:7878`, shown as `http://nas:7878`), so a service's file holds no `http://` address for a linter to object to
+
 ## v0.3.0 (2026-10-10)
 
 - add `client`: the base client every generated package sends its requests through, one copy in place of the one each repository kept, built on go-kt's `chttp`; what is a service's own (its name, how long it may take, what its refusals mean, how its error body reads) is a `client.Service` the repository writes by hand beside its generated package and names with `ClientService`

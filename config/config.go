@@ -106,6 +106,16 @@ type Service struct {
 	// the generator writes by default makes its client from it; without one
 	// the client is for a server of no particular kind.
 	ClientService string
+	// Credential is what the service calls the credential New is given, as
+	// a caller would read it: "API key". The client.go the generator writes
+	// by default names New's parameter after it (apiKey) and refuses an
+	// empty one in its words ("API key is required"); empty is a token.
+	Credential string
+	// NewDoc is the documentation of the New the generator writes by
+	// default, in place of its own: what the address is on this service,
+	// where its credential is found. It starts "New returns", and its lines
+	// are kept as they are broken.
+	NewDoc string
 	// Client, when set, is the Go source of client.go after its APIVersion
 	// constant, in place of the default: the Client type, a struct holding
 	// the base client in a field named Client, and New(baseURL, token

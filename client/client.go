@@ -117,7 +117,9 @@ type Service struct {
 	// client's name and its running version. Empty sends Go's own.
 	UserAgent string
 	// Example is an address of the kind the server answers on, for New to
-	// show beside a server url it refuses: "http://nas:7878".
+	// show beside a server url it refuses. A host alone, "nas:7878", is
+	// shown as http://nas:7878, which is how a server on a home network is
+	// reached; a hosted API gives its whole address.
 	Example string
 
 	// SecretHeaders are the headers the service takes its credential in,
@@ -196,11 +198,14 @@ func (s Service) maxResponse() int64 { return cmp.Or(s.MaxResponse, DefaultMaxRe
 
 // example is the service's example address as a clause, or nothing.
 func (s Service) example() string {
-	if s.Example == "" {
+	switch {
+	case s.Example == "":
 		return ""
+	case strings.Contains(s.Example, "://"):
+		return ", e.g. " + s.Example
+	default:
+		return ", e.g. http://" + s.Example
 	}
-
-	return ", e.g. " + s.Example
 }
 
 // secretHeaders are the headers a credential travels in beside Authorization.

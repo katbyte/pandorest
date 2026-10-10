@@ -11,6 +11,7 @@ import (
 	"slices"
 	"strings"
 	"unicode"
+	"unicode/utf8"
 
 	"github.com/katbyte/pandorest/definitions"
 )
@@ -52,7 +53,17 @@ func newGen(svc *definitions.Service, opts Options) (*gen, error) {
 		}
 	}
 
+	if opts.Client != "" && (opts.Credential != "" || opts.NewDoc != "") {
+		return nil, fmt.Errorf("%s: its config words the default client.go's New (Credential, NewDoc) and gives a Client of its own as well, which has its own words: drop one or the other", svc.Name)
+	}
 	if opts.Client == "" {
+		// New's parameter must be a name, and not one New already uses
+		if argument := credentialArgument(opts.Credential); opts.Credential != "" && (!isIdent(argument) || token.IsKeyword(argument) || slices.Contains([]string{"baseURL", "opts", "c", "err", "client", "errors"}, argument)) {
+			return nil, fmt.Errorf("%s: Credential %q makes no name for New's parameter (%q): call it what a caller would, as in \"API key\"", svc.Name, opts.Credential, argument)
+		}
+		if opts.NewDoc != "" && !strings.HasPrefix(strings.TrimSpace(opts.NewDoc), "New ") {
+			return nil, fmt.Errorf("%s: NewDoc must document New, and start with its name: %q", svc.Name, opts.NewDoc)
+		}
 		if !isIdent(svc.Auth) {
 			return nil, fmt.Errorf("%s: Auth %q is not the name of an authorizer of %s, which the default client.go needs; name one, or give the service a Client of its own", svc.Name, svc.Auth, opts.ClientImport)
 		}
@@ -392,24 +403,23 @@ const DocumentVersion = %q
 }
 
 // defaultClient is the client.go of a service that gives none of its own: the
-// Client type, and a New that wraps its token in the base client's authorizer
-// the service's Auth names and makes the client the service's own way where
-// it says what that is (%[3]s is the package's client.Service, or the base
-// client itself).
+// Client type, and a New that wraps its credential in the base client's
+// authorizer the service's Auth names and makes the client the service's own
+// way where it says what that is. Its arguments: the document's title, the
+// authorizer, what makes the client (the package's client.Service, or the
+// base client itself), New's documentation, its parameter for the credential
+// and its refusal of an empty one.
 const defaultClient = `// Client is a client for %[1]s; each of its operations is a method.
 // Requests go through Client.Client, the shared base client.
 type Client struct {
 	Client *client.Client
 }
 
-// New returns a client for %[1]s at baseURL (scheme and host, optionally a
-// path prefix) that authenticates with token. The options are the base
-// client's: a logger to trace to, a transport of the caller's own.
-func New(baseURL, token string, opts ...client.Option) (*Client, error) {
-	if token == "" {
-		return nil, errors.New("a token is required")
+%[4]sfunc New(baseURL, %[5]s string, opts ...client.Option) (*Client, error) {
+	if %[5]s == "" {
+		return nil, errors.New(%[6]q)
 	}
-	c, err := %[3]s.New(baseURL, client.%[2]s(token), opts...)
+	c, err := %[3]s.New(baseURL, client.%[2]s(%[5]s), opts...)
 	if err != nil {
 		return nil, err
 	}
@@ -418,18 +428,51 @@ func New(baseURL, token string, opts ...client.Option) (*Client, error) {
 }
 `
 
+// defaultNewDoc is the documentation of the default New, for a service that
+// words none of its own: the document's title, and the parameter the
+// credential is passed in.
+const defaultNewDoc = `New returns a client for %[1]s at baseURL (scheme and host, optionally a
+path prefix) that authenticates with %[2]s. The options are the base
+client's: a logger to trace to, a transport of the caller's own.`
+
 func (g *gen) clientFile() string {
 	if g.opts.Client != "" {
 		return g.fileHeader(g.apiVersionConsts() + strings.TrimSpace(g.opts.Client) + "\n")
 	}
 
-	return g.fileHeader(g.apiVersionConsts() + fmt.Sprintf(defaultClient, g.svc.Title, g.svc.Auth, cmp.Or(g.opts.ClientService, "client")))
+	argument, refusal := "token", "a token is required"
+	if g.opts.Credential != "" {
+		argument, refusal = credentialArgument(g.opts.Credential), g.opts.Credential+" is required"
+	}
+	doc := cmp.Or(g.opts.NewDoc, fmt.Sprintf(defaultNewDoc, g.svc.Title, argument))
+
+	return g.fileHeader(g.apiVersionConsts() + fmt.Sprintf(defaultClient, g.svc.Title, g.svc.Auth, cmp.Or(g.opts.ClientService, "client"), comment("", doc), argument, refusal))
 }
 
+// credentialArgument is the name of New's parameter for a credential the
+// service calls by a name of its own: "API key" is apiKey.
+func credentialArgument(credential string) string {
+	var b strings.Builder
+	for i, word := range strings.FieldsFunc(credential, func(r rune) bool { return !isIdentRune(r) || r == '_' }) {
+		if i == 0 {
+			b.WriteString(strings.ToLower(word))
+			continue
+		}
+		first, size := utf8.DecodeRuneInString(word)
+		b.WriteRune(unicode.ToUpper(first))
+		b.WriteString(word[size:])
+	}
+
+	return b.String()
+}
+
+// docFile is the package's documentation. It is the one generated file
+// without the generated header: linters pass over a file that has it, and a
+// package with a file written by hand beside the generated ones (the
+// service's own, a test) would then be told it has no package comment. Its
+// first line says what wrote it instead, which is how Generated knows it.
 func (g *gen) docFile() string {
 	var b strings.Builder
-	b.WriteString(Header)
-	b.WriteString("\n")
 	fmt.Fprintf(&b, "// Package %s is a typed client for %s %s, generated by pandorest\n", g.svc.Package, g.svc.Title, g.svc.APIVersion)
 	fmt.Fprintf(&b, "// from the definitions in %s, which were imported from %s.\n", filepath.ToSlash(g.opts.Definitions), g.svc.Source)
 	fmt.Fprintf(&b, `//

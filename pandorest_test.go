@@ -171,9 +171,10 @@ func TestImportGenerateCheck(t *testing.T) {
 		t.Errorf("generate reported:\n%s", stdout)
 	}
 	mini := listFiles(t, filepath.Join(root, "sdk", "mini"))
+	// every file is known as generated; all carry the header but doc.go, whose package comment a linter must be able to see
 	for name, src := range mini {
-		if !strings.HasPrefix(src, generator.Header) {
-			t.Errorf("%s has no generated header", name)
+		if !generator.Generated([]byte(src)) || strings.HasPrefix(src, generator.Header) == (name == "doc.go") {
+			t.Errorf("%s is not marked as a generated file should be:\n%s", name, strings.SplitN(src, "\n", 2)[0])
 		}
 	}
 	// each service is built on its own base client, with its own auth and notes

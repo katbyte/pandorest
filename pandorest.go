@@ -186,7 +186,7 @@ func generateService(svc config.Service, stdout io.Writer) error {
 	if err != nil {
 		return err
 	}
-	n, err := generator.Generate(defs, generator.Options{Dir: svc.Path(svc.Output), Definitions: svc.Definitions, Version: svc.Version, ClientImport: cmp.Or(svc.ClientImport, config.DefaultClient), Client: svc.Client, ClientService: svc.ClientService, Notes: svc.Notes})
+	n, err := generator.Generate(defs, generator.Options{Dir: svc.Path(svc.Output), Definitions: svc.Definitions, Version: svc.Version, ClientImport: cmp.Or(svc.ClientImport, config.DefaultClient), Client: svc.Client, ClientService: svc.ClientService, Credential: svc.Credential, NewDoc: svc.NewDoc, Notes: svc.Notes})
 	if err != nil {
 		return err
 	}

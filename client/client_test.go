@@ -24,7 +24,7 @@ var noWait = client.WithRetry(chttp.Retry{Wait: func(int) time.Duration { return
 
 // arr is a service in the shape a repository declares one.
 var arr = client.Service{
-	Name: "Arr", UserAgent: "arr-test/1.2.3", Example: "http://nas:8989", SecretHeaders: []string{"X-Arr-Token"}, RedirectAdvice: "set the url to the address Arr answers on, with its URL base", WebPageAdvice: "check the server url and its URL base",
+	Name: "Arr", UserAgent: "arr-test/1.2.3", Example: "nas:8989", SecretHeaders: []string{"X-Arr-Token"}, RedirectAdvice: "set the url to the address Arr answers on, with its URL base", WebPageAdvice: "check the server url and its URL base",
 	Messages: func(body []byte) []string {
 		if !bytes.HasPrefix(body, []byte("failed: ")) {
 			return nil
@@ -161,6 +161,10 @@ func TestNew(t *testing.T) {
 	c, err := arr.New("https://nas/arr/", client.APIKey("k"))
 	if err != nil || c.BaseURL != "https://nas/arr" {
 		t.Errorf("New = %+v, %v", c, err)
+	}
+	// a hosted API gives its whole address as the example, and it is shown as given
+	if _, err := (client.Service{Name: "TMDB", Example: "https://api.example.org"}).New("api.example.org", client.Bearer("t")); err == nil || !strings.Contains(err.Error(), "must be the address TMDB answers on, with its scheme and host, e.g. https://api.example.org") {
+		t.Errorf("New for a hosted API = %v", err)
 	}
 	// a server of no particular kind is named as one
 	if _, err := client.New("nas", client.Bearer("t")); err == nil || !strings.Contains(err.Error(), `server url "nas" must be the address the server answers on, with its scheme and host`) || strings.Contains(err.Error(), "e.g.") {

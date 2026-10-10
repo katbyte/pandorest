@@ -69,6 +69,8 @@ go run ./sdk/pandorest resolve     # which document and definitions each service
 
 **Documents are named by version.** `<dir>/<service>-openapi-<version>.json` imports into `<dir>/<service>-<version>/` beside it, and the highest version present is the one imported and generated from. The version is the release the document was taken from: for Emby and Jellyfin that is the document's own `info.version`, and for Sonarr, Radarr and Prowlarr, whose documents say `3.0.0` or `1.0.0` whatever the release, it is not, so name the file by the release. Nothing compares the two. The generated package declares both: `APIVersion` is the document's own and `DocumentVersion` the file's.
 
+A repository that vendors its dependencies takes a new pandorest in this order: `go get` it, regenerate with `-mod=mod` (`go run -mod=mod ./sdk/pandorest generate`), then `go mod tidy` and `go mod vendor`. The other way round, the stale `vendor/` and the generated files' old imports each stop the other from building.
+
 To refresh a spec, vendor the new document beside the old one, import it into its own definitions directory, read `diff -old <old dir> -new <new dir>`, and delete the old pair once the new one is in.
 
 ## A service
@@ -92,7 +94,8 @@ Everything about a service is in its `config.Service`, and everything but the fi
 | `SendRequired` | a property the document requires is always sent |
 | `PreferJSON` | a response that lists JSON beside another type answers JSON, not a file |
 | `ExpectSameShape` | a status outside 2xx that answers the success shape is expected, not an error |
-| `Client` | the source of `client.go` in place of the default, for a service that wants its own `New` or its own wording; it declares no imports and may use the standard packages generated code does (`errors`, `fmt`, `strings`, `strconv`, `net/http`, `net/url`, `io`, `encoding/json`, `context`, `slices`) |
+| `Credential`, `NewDoc` | the generated `New` in the service's words: what its credential is called (`API key` names the parameter `apiKey` and words the refusal of an empty one), and its documentation |
+| `Client` | the source of `client.go` in place of the default, for a service that wants a `New` of another shape; it declares no imports and may use the standard packages generated code does (`errors`, `fmt`, `strings`, `strconv`, `net/http`, `net/url`, `io`, `encoding/json`, `context`, `slices`) |
 | `Notes` | a paragraph for the generated package's documentation |
 
 A name the config gets wrong fails the import rather than doing nothing: a `KeepNull` field that is not a nullable number, a `WrittenWhole` schema that is not there, a `Words` entry that is not its key's letters.
@@ -170,7 +173,7 @@ doc.go                                    package documentation, the workarounds
 <tag>_constants.go                        the tag's enums, with PossibleValuesFor<Enum>
 ```
 
-Every generated file starts with the generated-code header; files with it that generation no longer produces are deleted, and anything without it is left alone, so hand-written files can live beside the generated ones.
+Every generated file starts with the generated-code header; files with it that generation no longer produces are deleted, and anything without it is left alone, so hand-written files can live beside the generated ones. The one exception is `doc.go`, which starts with the package comment instead and says there that pandorest generated it: linters pass over a file with the header, and would tell a package with a hand-written file in it that it has no package comment. `generator.Generated` tells a generated file from one written by hand, `doc.go` included.
 
 A method takes `ctx`, the path parameters, the body (`input`: the model by value, or an `io.Reader` and a content type), then the options struct by value, and returns `(result <Name>OperationResponse, err error)`:
 
@@ -219,7 +222,7 @@ Every operation either answers with something or has a `Case` that says why not:
 
 Generated code sends every request through the `client` package, after go-azure-sdk's `sdk/client`. It is built on [go-kt](https://github.com/katbyte/go-kt)'s `chttp`: a read is asked again for a dropped connection or a gateway's answer and a write is sent once, an answer is read whole up to a limit, and every exchange is traced to a logger when one is handed in, with the credentials hidden.
 
-What is common to every service is in the package. What is one service's own about being talked to is a `client.Service`, which the repository writes by hand in a file beside the generated ones and names in its config (`ClientService`). The file is the repository's: it has no generated header, so `generate` never writes it or removes it.
+What is common to every service is in the package. What is one service's own about being talked to is a `client.Service`, which the repository writes by hand in a file beside the generated ones and names in its config (`ClientService`). The file is the repository's: it has no generated header, so `generate` never writes it or removes it. It needs no exceptions from a linter: the package comment it would be asked for is in `doc.go`, and `Example` is a host (`nas:7878`, shown as `http://nas:7878`) or, for a hosted API, a whole address.
 
 ```go
 // sdk/radarr/service.go
@@ -229,7 +232,7 @@ package radarr
 var service = client.Service{
 	Name:           "Radarr",
 	UserAgent:      "radarr-mcp/" + version.Version,
-	Example:        "http://nas:7878",
+	Example:        "nas:7878",
 	RedirectAdvice: "set the server url to the address Radarr itself answers on, with its URL base if it has one",
 	Messages:       errorMessages, // what Radarr said went wrong, read out of its error body
 	Note:           note,          // what a 401 means here, and a 404 that is not JSON
@@ -245,7 +248,7 @@ var service = client.Service{
 | `Retry` | chttp's rule: a read, three times, for a dropped connection or a 502, 503 or 504 |
 | `Messages`, `Note` | an error shows the start of what the server sent |
 
-The generated `New(baseURL, token, opts...)` wraps the token in the authorizer `Auth` names (`client.APIKey` for a key in `X-Api-Key`, `client.Bearer` for a bearer token) and passes the options on: `client.WithLog`, `WithTransport`, `WithRetry` and `WithCookies` are what the application using the SDK decides. A service that takes its credential in a way of its own writes the authorizer in the same file and gives its config a `Client` source whose `New` uses it.
+The generated `New(baseURL, token, opts...)` wraps the token in the authorizer `Auth` names (`client.APIKey` for a key in `X-Api-Key`, `client.Bearer` for a bearer token) and passes the options on: `client.WithLog`, `WithTransport`, `WithRetry` and `WithCookies` are what the application using the SDK decides. A service that calls its credential something else says so in its config (`Credential: "API key"` makes it `New(baseURL, apiKey, opts...)`, refusing an empty one with "API key is required"), and words New's documentation with `NewDoc`. One that takes its credential in a way of its own writes the authorizer in the same file and gives its config a `Client` source whose `New` uses it.
 
 What happens to a redirect is the document's to say, operation by operation, so a workaround can settle any one of them:
 
