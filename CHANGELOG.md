@@ -1,6 +1,7 @@
-## Unreleased
+## v0.6.1 (2026-10-10)
 
 - `KeepNull` takes a string field as well as a nullable number: the field is held as a `*string`, left out when nil and sent as `""` when it points at one, for a server that keeps whatever a write leaves out and clears a field only when it is sent empty (Dockhand's `publicIp`). A string held by value is left out when empty, so such a field could not be cleared
+- the README lists the SDKs generated with pandorest, with their import paths and repositories
 
 ## v0.6.0 (2026-10-10)
 

@@ -23,6 +23,20 @@ api-defs/
 
 It does what the alternatives were tried and rejected for (oapi-codegen, openapi-generator): errors for undocumented statuses rather than a result per content type, plain string ids, readable names for machine-made operationIds, no builder chains or nullable wrappers, and a test for every operation it writes.
 
+## The SDKs it generates
+
+Each lives in the repository that vendors its document, beside the MCP server built on it. The version is the server release the document was taken from.
+
+| Server | SDK | Repository |
+|---|---|---|
+| Emby 4.10.0.40 | `github.com/katbyte/embyfin-mcp/sdk/emby` | [embyfin-mcp](https://github.com/katbyte/embyfin-mcp) |
+| Jellyfin 12.1.0 | `github.com/katbyte/embyfin-mcp/sdk/jf` | [embyfin-mcp](https://github.com/katbyte/embyfin-mcp) |
+| TMDB (document of 2026-09-22) | `github.com/katbyte/embyfin-mcp/sdk/tmdb` | [embyfin-mcp](https://github.com/katbyte/embyfin-mcp) |
+| Sonarr 4.0.20.3014 | `github.com/katbyte/sonarr-mcp/sdk/sonarr` | [sonarr-mcp](https://github.com/katbyte/sonarr-mcp) |
+| Radarr 6.4.4.10685 | `github.com/katbyte/radarr-mcp/sdk/radarr` | [radarr-mcp](https://github.com/katbyte/radarr-mcp) |
+| Prowlarr 2.6.5.5623 | `github.com/katbyte/prowlarr-mcp/sdk/prowlarr` | [prowlarr-mcp](https://github.com/katbyte/prowlarr-mcp) |
+| Dockhand 1.0.51 | `github.com/katbyte/dockhand-mcp/sdk/dockhand` | [dockhand-mcp](https://github.com/katbyte/dockhand-mcp) |
+
 ## Using it
 
 pandorest is a library. A repository that generates an SDK keeps what is its own, the documents, the services they describe and the workarounds for their bugs, and a main of a few lines that hands them over:
