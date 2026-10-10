@@ -1,6 +1,7 @@
 package generator
 
 import (
+	"cmp"
 	"errors"
 	"fmt"
 	"go/ast"
@@ -55,8 +56,15 @@ func newGen(svc *definitions.Service, opts Options) (*gen, error) {
 		if !isIdent(svc.Auth) {
 			return nil, fmt.Errorf("%s: Auth %q is not the name of an authorizer of %s, which the default client.go needs; name one, or give the service a Client of its own", svc.Name, svc.Auth, opts.ClientImport)
 		}
+		if opts.ClientService != "" && !isIdent(opts.ClientService) {
+			return nil, fmt.Errorf("%s: ClientService %q is not the name of a value in the package", svc.Name, opts.ClientService)
+		}
 		g.declare("Client", clientFileName)
 		g.declare("New", clientFileName)
+		if opts.ClientService != "" {
+			// declared by hand beside the generated files, and not to be declared again by a model
+			g.declare(opts.ClientService, "the service's own file")
+		}
 
 		return g, nil
 	}
@@ -385,7 +393,9 @@ const DocumentVersion = %q
 
 // defaultClient is the client.go of a service that gives none of its own: the
 // Client type, and a New that wraps its token in the base client's authorizer
-// the service's Auth names.
+// the service's Auth names and makes the client the service's own way where
+// it says what that is (%[3]s is the package's client.Service, or the base
+// client itself).
 const defaultClient = `// Client is a client for %[1]s; each of its operations is a method.
 // Requests go through Client.Client, the shared base client.
 type Client struct {
@@ -393,12 +403,13 @@ type Client struct {
 }
 
 // New returns a client for %[1]s at baseURL (scheme and host, optionally a
-// path prefix) that authenticates with token.
-func New(baseURL, token string) (*Client, error) {
+// path prefix) that authenticates with token. The options are the base
+// client's: a logger to trace to, a transport of the caller's own.
+func New(baseURL, token string, opts ...client.Option) (*Client, error) {
 	if token == "" {
 		return nil, errors.New("a token is required")
 	}
-	c, err := client.New(baseURL, client.%[2]s(token))
+	c, err := %[3]s.New(baseURL, client.%[2]s(token), opts...)
 	if err != nil {
 		return nil, err
 	}
@@ -412,7 +423,7 @@ func (g *gen) clientFile() string {
 		return g.fileHeader(g.apiVersionConsts() + strings.TrimSpace(g.opts.Client) + "\n")
 	}
 
-	return g.fileHeader(g.apiVersionConsts() + fmt.Sprintf(defaultClient, g.svc.Title, g.svc.Auth))
+	return g.fileHeader(g.apiVersionConsts() + fmt.Sprintf(defaultClient, g.svc.Title, g.svc.Auth, cmp.Or(g.opts.ClientService, "client")))
 }
 
 func (g *gen) docFile() string {

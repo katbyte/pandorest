@@ -345,11 +345,35 @@ func (im *importer) responseBody(method, path, owner string, op *openapi.Operati
 		return &definitions.Body{ContentType: "application/json", Type: im.responseType(resp.Content[jsonType].Schema, owner)}
 	}
 
-	if method == http.MethodGet {
+	// an operation that answers a redirect answers no content of its own: what it says is where it sends its caller
+	if _, only := redirects(op); method == http.MethodGet && !only {
 		im.fail(fmt.Sprintf("GET %s: declares no response content, so nothing says whether it answers JSON or a file", path))
 	}
 
 	return nil
+}
+
+// redirects are the redirect statuses an operation documents, and whether it
+// documents nothing else as an answer. One that documents only a redirect
+// answers the redirect itself: a login that sends its caller on to where they
+// were going. One that documents a 2xx beside it answers that, by way of the
+// redirect, which is then followed. A redirect no operation documents is the
+// base client's to refuse or follow, as its service says.
+func redirects(op *openapi.Operation) (codes []int, only bool) {
+	only = true
+	for code := range op.Responses {
+		n, err := strconv.Atoi(code)
+		switch {
+		case err != nil:
+		case n >= 200 && n < 300:
+			only = false
+		case n >= 300 && n < 400:
+			codes = append(codes, n)
+		}
+	}
+	slices.Sort(codes)
+
+	return codes, only && len(codes) > 0
 }
 
 // responseType maps a JSON response schema: untyped objects and "binary
@@ -376,9 +400,16 @@ func (im *importer) responseType(s *openapi.Schema, owner string) definitions.Ty
 // answer rather than an error: every 2xx the operation declares, and, for a
 // service whose config says so (ExpectSameShape), any other status whose
 // answer the document gives the same JSON shape as the success - a failure
-// that still answers in full.
+// that still answers in full. A redirect the operation declares is expected
+// too, and tells the base client what to do with one: handed back as the
+// answer when the operation declares no 2xx, followed to the answer when it
+// does.
 func (im *importer) expectedStatusCodes(method, path string, op *openapi.Operation, success *definitions.Body) []int {
-	var codes []int
+	codes, only := redirects(op)
+	if only {
+		return codes
+	}
+
 	for code, resp := range op.Responses {
 		n, err := strconv.Atoi(code)
 		if !strings.HasPrefix(code, "2") {

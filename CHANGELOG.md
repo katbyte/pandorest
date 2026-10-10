@@ -1,3 +1,11 @@
+## v0.3.0 (2026-10-10)
+
+- add `client`: the base client every generated package sends its requests through, one copy in place of the one each repository kept, built on go-kt's `chttp`; what is a service's own (its name, how long it may take, what its refusals mean, how its error body reads) is a `client.Service` the repository writes by hand beside its generated package and names with `ClientService`
+- generator (breaking): the default `client.go` is built on `client` unless `ClientImport` names another, and its `New` takes the base client's options after the token, so a base client of a repository's own needs an `Option` type and a `New` that takes them
+- a status error keeps what the server said as a list (`StatusError.Messages`, `client.Messages`) as well as joined in its text
+- what happens to a redirect is the document's to say, per operation: one that documents a redirect and no 2xx answers the redirect, handed back unfollowed (it used to fail the import); one that documents a redirect beside a 2xx expects both and has the redirect followed to its answer; a redirect no operation documents is refused or followed as the service says
+- `internal/client`, the stand-in the tests built generated packages against, is gone: they build against `client`
+
 ## v0.2.0 (2026-10-10)
 
 - add `sweep`: the read sweep a repository runs against a real server, every GET in a service's definitions called on the generated client and its answer held to decoding, carrying something and losing no object whole; one package made of the copies in embyfin-mcp, sonarr-mcp, radarr-mcp and prowlarr-mcp, with radarr's check for undeclared fields as `Strict` and prowlarr's `Sometimes`

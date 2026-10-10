@@ -27,7 +27,21 @@ const undocumentedStatus = http.StatusTeapot
 // operation tests share, the paged one a service with lists has, and New's
 // validation.
 func (g *gen) testHelpersFile() string {
-	return g.fileHeader(operationServerHelpers + g.pagedServerHelper() + newTest)
+	helpers := operationServerHelpers
+	if g.redirects() {
+		// a redirect that is an operation's answer says where it sends its caller, and a client that followed it would ask the canned server twice
+		helpers = strings.Replace(helpers, "\t\tw.WriteHeader(status)\n", "\t\tif status >= http.StatusMultipleChoices && status < http.StatusBadRequest {\n\t\t\tw.Header().Set(\"Location\", \"/redirected\")\n\t\t}\n\t\tw.WriteHeader(status)\n", 1)
+	}
+
+	return g.fileHeader(helpers + g.pagedServerHelper() + newTest)
+}
+
+// redirects reports whether any operation of the service answers a redirect:
+// one whose first expected status, the one its test serves, is a redirect.
+func (g *gen) redirects() bool {
+	return slices.ContainsFunc(g.svc.Operations(), func(o *definitions.Operation) bool {
+		return len(o.ExpectedStatusCodes) > 0 && o.ExpectedStatusCodes[0] >= http.StatusMultipleChoices && o.ExpectedStatusCodes[0] < http.StatusBadRequest
+	})
 }
 
 const operationServerHelpers = `// operationServer is a canned server that answers every request with one

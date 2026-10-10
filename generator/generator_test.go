@@ -98,13 +98,13 @@ func miniDefinitions(t *testing.T) *definitions.Service {
 }
 
 var miniConfig = config.Service{
-	Name: "mini", Package: "mini", Naming: config.OperationIDNaming, Auth: "Token", KeepNull: []string{"Item.Season"},
+	Name: "mini", Package: "mini", Naming: config.OperationIDNaming, Auth: "Bearer", KeepNull: []string{"Item.Season"},
 	Paging: &config.Paging{Start: "startIndex", Limit: "limit", Items: "Items", Total: "TotalRecordCount"},
 }
 
-// testClient is the base client the generated package is built on: the
-// smallest one that meets what generated code needs.
-const testClient = "github.com/katbyte/pandorest/internal/client"
+// testClient is the base client the generated package is built on:
+// pandorest's own.
+const testClient = config.DefaultClient
 
 // generateInModule writes the package under testdata in this directory, so
 // it builds against the module's base client, and removes it afterwards.
@@ -211,7 +211,7 @@ func TestGenerate(t *testing.T) {
 			"type Union = json.RawMessage",
 			"type Linux struct{}",
 			// the default client.go: the base client's authorizer the service's Auth names
-			"c, err := client.New(baseURL, client.Token(token))", "// Client is a client for Mini; each of its operations is a method.",
+			"func New(baseURL, token string, opts ...client.Option) (*Client, error) {", "c, err := client.New(baseURL, client.Bearer(token), opts...)", "// Client is a client for Mini; each of its operations is a method.",
 			`const APIVersion = "1"`,
 			// the package documentation: the base client, how the lists page, the service's notes, the workarounds
 			"// under common_. The requests go through the hand-written base client,\n// " + testClient + ".\n",
@@ -306,6 +306,8 @@ func TestRenderRejects(t *testing.T) {
 				}
 			}
 		}, "Client.GetItemsComplete is declared by both operation GetItems and operation GetItemsComplete"},
+		{"a service value that is no name", func(_ *definitions.Service, o *generator.Options) { o.ClientService = "the service" }, `ClientService "the service" is not the name of a value in the package`},
+		{"a service value named like a model", func(_ *definitions.Service, o *generator.Options) { o.ClientService = "Item" }, "Item is declared by both the service's own file and model Item"},
 		{"a client that is not Go", func(_ *definitions.Service, o *generator.Options) { o.Client = "type Client struct {" }, "the config's Client is not Go source"},
 		{"a client with no New", func(_ *definitions.Service, o *generator.Options) { o.Client = "type Client struct{}" }, "the config's Client does not declare New"},
 		{"a client with no Client", func(_ *definitions.Service, o *generator.Options) { o.Client = "func New() {}" }, "the config's Client does not declare Client"},
@@ -346,7 +348,7 @@ func New(baseURL, token string) (*Client, error) {
 	if token == "" {
 		return nil, errors.New("a read access token is required")
 	}
-	c, err := client.New(baseURL, client.Token(strings.TrimSpace(token)))
+	c, err := client.New(baseURL, client.Bearer(strings.TrimSpace(token)))
 	if err != nil {
 		return nil, err
 	}
@@ -376,7 +378,7 @@ func TestGenerateOwnClient(t *testing.T) {
 	client := read(t, dir, "client.go")
 	for _, want := range []string{
 		generator.Header + "\npackage mini\n\nimport (\n\t\"errors\"\n\t\"strings\"\n\n\t\"" + testClient + "\"\n)\n",
-		`const APIVersion = "3"`, `const DefaultBaseURL = "https://api.example.org"`, "client.New(baseURL, client.Token(strings.TrimSpace(token)))",
+		`const APIVersion = "3"`, `const DefaultBaseURL = "https://api.example.org"`, "client.New(baseURL, client.Bearer(strings.TrimSpace(token)))",
 	} {
 		if !strings.Contains(client, want) {
 			t.Errorf("client.go has no %s:\n%s", want, client)
@@ -433,13 +435,25 @@ const arrSpec = `{"openapi": "3.0.1", "info": {"title": "Arr", "version": "3.0.0
     "400": {"content": {"application/json": {"schema": {"type": "array", "items": {"$ref": "#/components/schemas/Record"}}}}}}}},
   "/api/v3/config/host": {"put": {"tags": ["HostConfig"],
     "requestBody": {"content": {"application/json": {"schema": {"$ref": "#/components/schemas/HostConfig"}}}},
-    "responses": {"202": {"content": {"application/json": {"schema": {"$ref": "#/components/schemas/HostConfig"}}}}}}}},
+    "responses": {"202": {"content": {"application/json": {"schema": {"$ref": "#/components/schemas/HostConfig"}}}}}}},
+  "/login": {"post": {"tags": ["Authentication"], "responses": {"302": {"description": "on to where the caller was going"}}}},
+  "/logout": {"get": {"tags": ["Authentication"], "responses": {"302": {"description": "to the front page"}}}}},
   "components": {"schemas": {
     "Record": {"type": "object", "required": ["title", "monitored"], "properties": {"id": {"type": "integer"}, "title": {"type": "string"}, "monitored": {"type": "boolean"}}},
     "HistoryPage": {"type": "object", "properties": {"page": {"type": "integer"}, "pageSize": {"type": "integer"}, "totalRecords": {"type": "integer"},
       "records": {"type": "array", "items": {"$ref": "#/components/schemas/Record"}}}},
     "HostConfig": {"type": "object", "properties": {"bindAddress": {"type": "string"}, "port": {"type": "integer"}, "sslPort": {"type": "integer", "nullable": true},
       "enableSsl": {"type": "boolean"}, "tags": {"type": "array", "items": {"type": "integer"}}}}}}}`
+
+// serviceSource is the file a repository writes by hand beside its generated
+// package: what is the service's own about being talked to.
+const serviceSource = `package mini
+
+import "github.com/katbyte/pandorest/client"
+
+// service is what is Arr's own about being talked to.
+var service = client.Service{Name: "Arr", UserAgent: "mini-test", Example: "http://nas:8989"}
+`
 
 // A service that pages by page number, expects a failure that answers in
 // full, holds the document to its required properties and writes its
@@ -453,14 +467,19 @@ func TestGenerateServiceOptions(t *testing.T) {
 		t.Fatal(err)
 	}
 	svc, err := importer.FromSpec(config.Service{
-		Name: "mini", Package: "mini", Naming: config.PathNaming, Auth: "Token", PathPrefix: "/api/v3", Words: map[string]string{"testall": "TestAll"},
+		Name: "mini", Package: "mini", Naming: config.PathNaming, Auth: "APIKey", PathPrefix: "/api/v3", Words: map[string]string{"testall": "TestAll"},
 		Paging:     &config.Paging{Start: "page", Limit: "pageSize", Items: "records", Total: "totalRecords", ByPage: true},
 		PreferJSON: true, ExpectSameShape: true, SendRequired: true, WrittenWhole: []string{"HostConfig"}, KeepNull: []string{"HostConfig.sslPort"},
 	}, spec, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	dir := generateInModule(t, svc, generator.Options{Version: "5.0.1.9"})
+	// the service says what is its own in a file it writes by hand beside the
+	// generated ones, which the generated New makes its client from
+	dir := generateInModule(t, svc, generator.Options{Version: "5.0.1.9", ClientService: "service"})
+	if err := os.WriteFile(filepath.Join(dir, "service.go"), []byte(serviceSource), 0o600); err != nil {
+		t.Fatal(err)
+	}
 
 	for file, wants := range map[string][]string{
 		"history_method_getseriesbyseriesidhistory.go": {
@@ -476,9 +495,12 @@ func TestGenerateServiceOptions(t *testing.T) {
 			`{"empty page", 0, 2, GetSeriesBySeriesIdHistoryOperationOptions{PageSize: new(1)}, 2, []string{"1", "2", "3"}},`,
 			`{"short page", 0, 9, GetSeriesBySeriesIdHistoryOperationOptions{PageSize: new(2)}, 1, []string{"1"}},`,
 		},
-		"client_test.go":                       {`fmt.Fprintf(w, "{\"records\":[%s],\"totalRecords\":%d}", item, total)`, "reporting total items, and records the page of\n// each request."},
-		"indexer_method_postindexertestall.go": {"\t\t\thttp.StatusOK,\n\t\t\thttp.StatusBadRequest,\n"},
-		"client.go":                            {`const APIVersion = "3.0.0"`, `const DocumentVersion = "5.0.1.9"`},
+		"client_test.go": {`fmt.Fprintf(w, "{\"records\":[%s],\"totalRecords\":%d}", item, total)`, "reporting total items, and records the page of\n// each request.", "\t\tif status >= http.StatusMultipleChoices && status < http.StatusBadRequest {\n\t\t\tw.Header().Set(\"Location\", \"/redirected\")\n\t\t}\n"},
+		// an operation whose documented answer is a redirect expects it, and its test proves the client hands it back unfollowed
+		"authentication_method_postlogin.go":      {"\t\t\thttp.StatusFound,\n"},
+		"authentication_method_getlogout_test.go": {"c, s := newOperationServer(t, 302, \"\", \"\")", "if result.HttpResponse == nil || result.HttpResponse.StatusCode != 302 {"},
+		"indexer_method_postindexertestall.go":    {"\t\t\thttp.StatusOK,\n\t\t\thttp.StatusBadRequest,\n"},
+		"client.go":                               {`const APIVersion = "3.0.0"`, `const DocumentVersion = "5.0.1.9"`, "c, err := service.New(baseURL, client.APIKey(token), opts...)"},
 	} {
 		src := read(t, dir, file)
 		for _, want := range wants {

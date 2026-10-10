@@ -226,7 +226,9 @@ var httpMethods = map[string]string{
 var statusNames = map[int]string{
 	http.StatusOK: "http.StatusOK", http.StatusCreated: "http.StatusCreated", http.StatusAccepted: "http.StatusAccepted",
 	http.StatusNoContent: "http.StatusNoContent", http.StatusPartialContent: "http.StatusPartialContent",
-	http.StatusBadRequest: "http.StatusBadRequest",
+	http.StatusBadRequest:       "http.StatusBadRequest",
+	http.StatusMovedPermanently: "http.StatusMovedPermanently", http.StatusFound: "http.StatusFound", http.StatusSeeOther: "http.StatusSeeOther",
+	http.StatusNotModified: "http.StatusNotModified", http.StatusTemporaryRedirect: "http.StatusTemporaryRedirect", http.StatusPermanentRedirect: "http.StatusPermanentRedirect",
 }
 
 func (g *gen) writeMethod(b *strings.Builder, o *definitions.Operation, responseType, optionsType string) {

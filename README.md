@@ -25,7 +25,7 @@ It does what the alternatives were tried and rejected for (oapi-codegen, openapi
 
 ## Using it
 
-pandorest is a library. A repository that generates an SDK keeps what is its own, the documents, the services they describe, the workarounds for their bugs and the base client its generated packages send requests through, and a main of a few lines that hands them over:
+pandorest is a library. A repository that generates an SDK keeps what is its own, the documents, the services they describe and the workarounds for their bugs, and a main of a few lines that hands them over:
 
 ```go
 // sdk/pandorest/main.go
@@ -46,8 +46,8 @@ func main() {
 			Output:       "sdk/sonarr",
 			Naming:       config.PathNaming,
 			PathPrefix:   "/api/v3",
-			ClientImport: "github.com/katbyte/sonarr-mcp/sdk/client",
-			Auth:         "APIKey",
+			Auth:          "APIKey",
+			ClientService: "service", // sdk/sonarr/service.go, written by hand
 			Paging:       &config.Paging{Start: "page", Limit: "pageSize", Items: "records", Total: "totalRecords", ByPage: true},
 		}},
 		Workarounds: workarounds.All, // the repository's own fixes for its document
@@ -73,14 +73,15 @@ To refresh a spec, vendor the new document beside the old one, import it into it
 
 ## A service
 
-Everything about a service is in its `config.Service`, and everything but the first five is optional.
+Everything about a service is in its `config.Service`, and everything but the first four is optional.
 
 | Field | Says |
 |---|---|
 | `Name` | the `-service` name, and the prefix of the document and definitions names |
 | `Package`, `Output` | the generated package's name and directory |
-| `ClientImport` | the import path of the hand-written base client the package is built on |
-| `Auth` | the name of the base client's authorizer: the generated `New(baseURL, token)` calls `client.<Auth>(token)` |
+| `Auth` | the name of the base client's authorizer: the generated `New(baseURL, token)` calls `client.<Auth>(token)`, which is `APIKey` or `Bearer` on pandorest's own |
+| `ClientService` | the name of a `client.Service` written by hand in the generated package, which the generated `New` makes its client from |
+| `ClientImport` | the import path of a base client of the repository's own, in place of pandorest's |
 | `Dir` | where the documents and definitions live, `api-defs` unless set |
 | `Naming` | `PathNaming` names a method after its HTTP method and path, `OperationIDNaming` after its operationId |
 | `PathPrefix`, `Words` | for path naming: a prefix left out of names (`/api/v3`), and the spelling of run-together segments (`episodefile` as `EpisodeFile`) |
@@ -109,7 +110,7 @@ A name the config gets wrong fails the import rather than doing nothing: a `Keep
 | `differ` | `data-api-differ` | reports operations, options, bodies, models, fields and enum values added, removed or changed |
 | `generator` | `generator-go-sdk` | writes the package from definitions only |
 | `sweep` | | the read sweep: every GET called on the generated SDK against a real server, for a repository's live tests |
-| the base client (yours) | `go-azure-sdk/sdk/client` | the hand-written client a repository's generated packages share |
+| `client` | `go-azure-sdk/sdk/client` | the base client every generated package sends its requests through |
 
 ## Importing
 
@@ -186,7 +187,7 @@ all.Items        // every page
 - In models, booleans are `*bool` and lists and maps are `omitzero`, so a body can leave a flag to the server's default, send an explicit false, and clear a list with an empty one.
 - Numbers in models are held by value, a null read as 0, except the fields `KeepNull` names, which are pointers.
 - `Model` is a pointer for a struct, enum or primitive, and the value for a list, map or raw JSON. An operation that answers a file has no `Model`: its body is left unread in `HttpResponse.Body` for the caller to read and close. An operation that expects a 204 beside its JSON answers a nil `Model` and no error for it.
-- A status outside `ExpectedStatusCodes` is an error from the base client, even a 2xx, returned with the response.
+- A status outside `ExpectedStatusCodes` is a `*client.StatusError`, even a 2xx, returned with the response. A redirect an operation documents is not an error: see the base client, below.
 - A `Complete` pager asks for the page size the options give (`client.DefaultPageSize` when unset) and stops on an empty or short page, or at the total when the server reports one.
 
 ### Generated tests
@@ -216,17 +217,49 @@ Every operation either answers with something or has a `Case` that says why not:
 
 ### The base client
 
-Generated code sends every request through a hand-written base client, which each repository keeps beside its generated packages, after go-azure-sdk's `sdk/client`. It stays with the repository because it is where a service's own behaviour belongs: how it takes a credential, what it retries, how it words a failure. What generated code needs of it:
+Generated code sends every request through the `client` package, after go-azure-sdk's `sdk/client`. It is built on [go-kt](https://github.com/katbyte/go-kt)'s `chttp`: a read is asked again for a dropped connection or a gateway's answer and a write is sent once, an answer is read whole up to a limit, and every exchange is traced to a logger when one is handed in, with the credentials hidden.
 
-- `Client`, with `BaseURL string` and `HTTPClient *http.Client`, and `New(baseURL string, authorizer Authorizer) (*Client, error)`, which refuses a URL with no scheme and trims a trailing slash
-- an authorizer the service's `Auth` names, as a function or a type that takes the token
-- `RequestOptions` with `ContentType`, `ExpectedStatusCodes`, `HTTPMethod`, `OptionsObject`, `Path` and `StreamResponse`
-- `(*Client).NewRequest`, and on its request `Marshal`, `SetBody` and `Execute`
-- a `Response` that embeds `*http.Response`, is returned beside an error whenever the server answered, and has `Unmarshal`
-- `Headers` and `QueryParams`, each with `Append`
-- `CSV`, `JSONObject`, `DeepObject`, `DefaultPageSize`, and `StatusCode(err)`, which reads the status from the error for an undocumented one and answers 0 for any other
+What is common to every service is in the package. What is one service's own about being talked to is a `client.Service`, which the repository writes by hand in a file beside the generated ones and names in its config (`ClientService`). The file is the repository's: it has no generated header, so `generate` never writes it or removes it.
 
-[`internal/client`](internal/client/client.go) is the smallest client that meets it, and what this module's tests build and run generated packages against. It is the contract in code, not a client to ship.
+```go
+// sdk/radarr/service.go
+package radarr
+
+// service is what is Radarr's own about being talked to.
+var service = client.Service{
+	Name:           "Radarr",
+	UserAgent:      "radarr-mcp/" + version.Version,
+	Example:        "http://nas:7878",
+	RedirectAdvice: "set the server url to the address Radarr itself answers on, with its URL base if it has one",
+	Messages:       errorMessages, // what Radarr said went wrong, read out of its error body
+	Note:           note,          // what a 401 means here, and a 404 that is not JSON
+}
+```
+
+| A service says | Without it |
+|---|---|
+| `Name`, `UserAgent`, `Example` | "the server", Go's user agent, no example address beside a refused url |
+| `SecretHeaders`, `SecretNames` | `Authorization` and `X-Api-Key` are hidden from a trace, and what chttp hides unasked |
+| `FollowRedirects`, `RedirectAdvice`, `WebPageAdvice` | a redirect no operation documents is refused, since following one turns a write into a read that reports success |
+| `Timeout`, `HeaderWait`, `MaxResponse` | two minutes for a request, all of it for the server to start answering, 64 MiB held |
+| `Retry` | chttp's rule: a read, three times, for a dropped connection or a 502, 503 or 504 |
+| `Messages`, `Note` | an error shows the start of what the server sent |
+
+The generated `New(baseURL, token, opts...)` wraps the token in the authorizer `Auth` names (`client.APIKey` for a key in `X-Api-Key`, `client.Bearer` for a bearer token) and passes the options on: `client.WithLog`, `WithTransport`, `WithRetry` and `WithCookies` are what the application using the SDK decides. A service that takes its credential in a way of its own writes the authorizer in the same file and gives its config a `Client` source whose `New` uses it.
+
+What happens to a redirect is the document's to say, operation by operation, so a workaround can settle any one of them:
+
+| The operation documents | A redirect is |
+|---|---|
+| no redirect | refused with the service's advice, or followed if the service sets `FollowRedirects`: it nearly always means the server url points at something in front of the server |
+| a redirect and no 2xx (a login that sends its caller on) | the answer: handed back unfollowed, to read where it points and the cookie it set |
+| a redirect beside a 2xx | on the way to the answer: followed, the credentials staying on the server's host |
+
+An error for an undocumented status is a `*client.StatusError`: chttp's, which it unwraps to, with the server's words kept apart as `Messages` as well as joined in its text. `client.StatusCode`, `IsNotFound`, `IsUnauthorized`, `IsForbidden` and `Messages` read one out of an error.
+
+`Client.HTTPClient` is there for the generated tests, which put their canned server's own client in it. An application that wants to see or shape the traffic passes `client.WithTransport` instead, and keeps the retries and the trace.
+
+A repository can still keep a base client of its own and name it in `ClientImport`. Generated code calls `New(baseURL, authorizer, ...Option)`, `RequestOptions`, `NewRequest`, `Marshal`, `SetBody`, `Execute`, `Response.Unmarshal`, `Headers` and `QueryParams` with `Append`, `CSV`, `JSONObject`, `DeepObject`, `DefaultPageSize` and `StatusCode`, and its tests set `HTTPClient` and read `BaseURL`.
 
 ## What was left out of Pandora
 
@@ -240,4 +273,4 @@ make check-all  # build + test + lint + actionlint + yamllint + shellcheck + typ
 make cover      # tests with coverage; the coverage workflow publishes the total as the README badge
 ```
 
-Nothing is vendored and nothing outside the standard library is imported; tool versions are pinned in `.tools/go.mod` and dependabot keeps them current.
+Nothing is vendored; the only dependency is go-kt, for the HTTP client the base client is built on. Tool versions are pinned in `.tools/go.mod` and dependabot keeps them current.

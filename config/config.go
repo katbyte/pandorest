@@ -18,6 +18,10 @@ import (
 // when its Dir is empty.
 const DefaultDir = "api-defs"
 
+// DefaultClient is the base client a service's generated package is built on
+// when its ClientImport is empty: pandorest's own.
+const DefaultClient = "github.com/katbyte/pandorest/client"
+
 // Naming is how operations get their Go method names.
 type Naming string
 
@@ -86,14 +90,22 @@ type Service struct {
 	// letters, or the import fails; a segment not listed is capitalised as
 	// it stands.
 	Words map[string]string
-	// ClientImport is the import path of the hand-written base client the
-	// generated package sends every request through.
+	// ClientImport is the import path of the base client the generated
+	// package sends every request through; empty is DefaultClient. A
+	// repository that keeps a base client of its own names it here, and it
+	// must have what generated code calls (see the README).
 	ClientImport string
 	// Auth names how the service authenticates, and is recorded in its
 	// definitions. The client.go the generator writes by default wraps the
 	// token New is given in the base client's authorizer of this name,
-	// client.<Auth>(token).
+	// client.<Auth>(token): APIKey or Bearer on pandorest's own.
 	Auth string
+	// ClientService names a client.Service the repository declares by hand
+	// in the generated package, in a file of its own beside the generated
+	// ones: what is the service's own about being talked to. The client.go
+	// the generator writes by default makes its client from it; without one
+	// the client is for a server of no particular kind.
+	ClientService string
 	// Client, when set, is the Go source of client.go after its APIVersion
 	// constant, in place of the default: the Client type, a struct holding
 	// the base client in a field named Client, and New(baseURL, token
@@ -103,8 +115,8 @@ type Service struct {
 	// the packages generated code uses (errors, fmt, strings, strconv,
 	// net/http, net/url, io, encoding/json, context, slices), so a source
 	// that needs another does not compile. The generated tests hold New to
-	// refusing an empty token and a URL with no scheme, and to trimming a
-	// trailing slash.
+	// refusing an empty token and an address with no scheme, and to leaving
+	// the slash off the end of the address it keeps.
 	Client string
 	// Notes is a paragraph added to the generated package's documentation,
 	// for what is true of the service's every operation and no document

@@ -10,8 +10,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/katbyte/pandorest/client"
 	"github.com/katbyte/pandorest/definitions"
-	"github.com/katbyte/pandorest/internal/client"
 	"github.com/katbyte/pandorest/sweep"
 )
 
@@ -201,7 +201,7 @@ func newSweep(t *testing.T, served answers) (s sweep.Sweep, queries *[]string) {
 		_, _ = io.WriteString(w, a.body)
 	}))
 	t.Cleanup(srv.Close)
-	c, err := client.New(srv.URL, client.Token("t"))
+	c, err := client.New(srv.URL, client.Bearer("t"))
 	if err != nil {
 		t.Fatal(err)
 	}

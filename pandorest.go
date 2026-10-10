@@ -14,9 +14,8 @@
 //	resolve   which document and definitions each service is at
 //
 // A repository that generates an SDK keeps what is its own - the documents,
-// the services they describe, the workarounds for their bugs and the
-// hand-written base client its generated packages send requests through -
-// and a main of a few lines that hands them to this package:
+// the services they describe and the workarounds for their bugs - and a main
+// of a few lines that hands them to this package:
 //
 //	func main() {
 //		pandorest.Main(pandorest.Config{Services: services, Workarounds: workarounds})
@@ -29,11 +28,13 @@
 //	go run ./sdk/pandorest diff
 //	go run ./sdk/pandorest diff -old api-defs/emby-4.9.0.30 -new api-defs/emby-4.10.0.40
 //
-// See the README for the design, what a base client must provide and how to
-// refresh a spec.
+// The packages it writes send their requests through the client package, the
+// base client they share. See the README for the design and how to refresh a
+// spec.
 package pandorest
 
 import (
+	"cmp"
 	"errors"
 	"flag"
 	"fmt"
@@ -185,7 +186,7 @@ func generateService(svc config.Service, stdout io.Writer) error {
 	if err != nil {
 		return err
 	}
-	n, err := generator.Generate(defs, generator.Options{Dir: svc.Path(svc.Output), Definitions: svc.Definitions, Version: svc.Version, ClientImport: svc.ClientImport, Client: svc.Client, Notes: svc.Notes})
+	n, err := generator.Generate(defs, generator.Options{Dir: svc.Path(svc.Output), Definitions: svc.Definitions, Version: svc.Version, ClientImport: cmp.Or(svc.ClientImport, config.DefaultClient), Client: svc.Client, ClientService: svc.ClientService, Notes: svc.Notes})
 	if err != nil {
 		return err
 	}

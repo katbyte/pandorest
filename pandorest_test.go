@@ -47,8 +47,9 @@ func (searchTerm) Apply(spec *openapi.Spec) error {
 }
 
 // repository is what a repository's main hands pandorest: two services, one
-// with a workaround, a client of its own and its documents under the default
-// directory, the other with none of those.
+// with a workaround, a base client of its own and its documents under the
+// default directory, the other with none of those, built on pandorest's own
+// client the way the service says it is talked to.
 var repository = pandorest.Config{
 	Services: []config.Service{
 		{
@@ -56,7 +57,7 @@ var repository = pandorest.Config{
 			Notes:  "Dates are strings.",
 			Paging: &config.Paging{Start: "startIndex", Limit: "limit", Items: "Items", Total: "TotalRecordCount"},
 		},
-		{Name: "other", Package: "other", Output: "lib/other", Dir: "docs", Naming: config.PathNaming, ClientImport: "example.org/repo/lib/client", Auth: "APIKey"},
+		{Name: "other", Package: "other", Output: "lib/other", Dir: "docs", Naming: config.PathNaming, Auth: "APIKey", ClientService: "service"},
 	},
 	Workarounds: []workarounds.Workaround{searchTerm{}},
 }
@@ -183,8 +184,11 @@ func TestImportGenerateCheck(t *testing.T) {
 		t.Errorf("mini's doc.go lacks its source or its notes:\n%s", doc)
 	}
 	other := listFiles(t, filepath.Join(root, "lib", "other"))
-	if src := other["client.go"]; !strings.Contains(src, `"example.org/repo/lib/client"`) || !strings.Contains(src, "client.APIKey(token)") {
-		t.Errorf("other's client.go lacks its base client or its auth:\n%s", src)
+	if src := other["client.go"]; !strings.Contains(src, `"`+config.DefaultClient+`"`) || !strings.Contains(src, "c, err := service.New(baseURL, client.APIKey(token), opts...)") {
+		t.Errorf("other's client.go is not built on pandorest's client, with its auth, the service's way:\n%s", src)
+	}
+	if src := mini["client.go"]; !strings.Contains(src, "c, err := client.New(baseURL, client.Token(token), opts...)") {
+		t.Errorf("mini's client.go is not built on its own base client:\n%s", src)
 	}
 	if _, ok := other["things_method_deletethingsbyid.go"]; !ok {
 		t.Errorf("other's operation is not named by its path: %v", other)

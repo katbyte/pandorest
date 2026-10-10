@@ -1003,3 +1003,38 @@ func TestNameClash(t *testing.T) {
 		t.Errorf("the other operation = %+v", list)
 	}
 }
+
+// An operation that documents a redirect and no 2xx answers the redirect: it
+// is what the method expects, and a GET of that kind need not say what
+// content it answers. One that documents a 2xx as well expects both, which
+// tells the base client the redirect is on the way to the answer.
+func TestRedirectAnswers(t *testing.T) {
+	t.Parallel()
+
+	spec, err := openapi.Parse([]byte(arrSpec))
+	if err != nil {
+		t.Fatal(err)
+	}
+	moved := func(codes ...string) *openapi.Operation {
+		op := &openapi.Operation{Tags: []string{"Authentication"}, Responses: map[string]*openapi.Response{}}
+		for _, code := range codes {
+			op.Responses[code] = &openapi.Response{}
+		}
+
+		return op
+	}
+	spec.Paths["/login"] = &openapi.PathItem{Post: moved("302", "401")}
+	spec.Paths["/logout"] = &openapi.PathItem{Get: moved("302", "303")}
+	spec.Paths["/ping"].Get.Responses["307"] = &openapi.Response{}
+
+	svc, err := FromSpec(arrConfig, spec, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for key, want := range map[string][]int{"POST /login": {302}, "GET /logout": {302, 303}, "GET /ping": {200, 307}, "GET /api/v3/history": {200}} {
+		o := find(svc.Operations(), func(o *definitions.Operation) bool { return o.Key() == key })
+		if o == nil || !slices.Equal((*o).ExpectedStatusCodes, want) {
+			t.Errorf("%s expects %v, want %v", key, (*o).ExpectedStatusCodes, want)
+		}
+	}
+}

@@ -17,11 +17,10 @@
 //	<tag>_model_<model>.go             one per model
 //	<tag>_constants.go                 the tag's enums
 //
-// Requests go through a hand-written base client, which each repository
-// keeps beside its generated packages and names in Options.ClientImport. What
-// the generated code needs of it is in the README; the smallest one that
-// meets it is internal/testclient, which this package's tests build and run
-// a generated package against.
+// Requests go through a base client, named in Options.ClientImport:
+// pandorest's own (the client package), which this package's tests build and
+// run a generated package against, or one a repository keeps of its own, with
+// what the README says generated code calls.
 package generator
 
 import (
@@ -67,6 +66,9 @@ type Options struct {
 	// Client, when set, is the source of client.go after its APIVersion
 	// constant, in place of the default (see config.Service.Client).
 	Client string
+	// ClientService, when set, names the client.Service in the package
+	// that the default client.go makes its client from.
+	ClientService string
 	// Notes is a paragraph added to the package documentation.
 	Notes string
 }
