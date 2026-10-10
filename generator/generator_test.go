@@ -13,6 +13,7 @@ import (
 	"github.com/katbyte/pandorest/definitions"
 	"github.com/katbyte/pandorest/generator"
 	"github.com/katbyte/pandorest/importer"
+	"github.com/katbyte/pandorest/importer/workarounds"
 	"github.com/katbyte/pandorest/openapi"
 )
 
@@ -144,6 +145,43 @@ func read(t *testing.T, dir, name string) string {
 	}
 
 	return string(b)
+}
+
+// An operation a workaround gave an Accept option leaves what it asks for to
+// its caller, the way any header option is the caller's: the option's value
+// is the whole header, in place of JSON or of a file's own type, and the
+// generated test holds the method to that.
+//
+//nolint:paralleltest // writes the testdata package the other tests would remove
+func TestAcceptOption(t *testing.T) {
+	spec, err := openapi.Parse([]byte(miniSpec))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := workarounds.AddParameters(spec, []string{"GET /Items/{itemId}", "GET /Items/{itemId}/Images/{imageType}/{index}"}, workarounds.Param{Name: "Accept", In: openapi.InHeader, Type: openapi.TypeString, Description: "What to ask for."}); err != nil {
+		t.Fatal(err)
+	}
+	svc, err := importer.FromSpec(miniConfig, spec, []string{"mini-fix"}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	dir := generateInModule(t, svc, generator.Options{})
+	goTool(t, dir, "vet")
+	goTool(t, dir, "test")
+
+	method := read(t, dir, "items_method_getitem.go")
+	for _, want := range []string{"\t// What to ask for.\n\tAccept string\n", `out.Append("Accept", o.Accept)`, "func (c Client) GetItem(ctx context.Context, itemId string, options GetItemOperationOptions) ("} {
+		if !strings.Contains(method, want) {
+			t.Errorf("GetItem has no %q:\n%s", want, method)
+		}
+	}
+
+	// the file's own type is still what the method asks for when the option is left empty, and its test sets the option
+	image, imageTest := read(t, dir, "image_method_getitemimage.go"), read(t, dir, "image_method_getitemimage_test.go")
+	if !strings.Contains(image, `Accept: "image/*",`) || !strings.Contains(imageTest, `got != "v-Accept"`) || strings.Contains(imageTest, "asked for first") {
+		t.Errorf("GetItemImage with an Accept option:\n%s\n%s", image, imageTest)
+	}
 }
 
 //nolint:paralleltest // writes the testdata package the other test would remove

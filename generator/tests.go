@@ -20,6 +20,15 @@ import (
 // the generated code against the definitions, not the server: the
 // integration suite's read sweep and bespoke tests do that.
 
+// acceptOption reports whether the operation leaves what it asks for to its
+// caller: an Accept option, which a workaround adds and whose value is then
+// the whole header.
+func acceptOption(o *definitions.Operation) bool {
+	return slices.ContainsFunc(o.Options, func(opt definitions.Option) bool {
+		return opt.In == definitions.InHeader && strings.EqualFold(opt.Name, "Accept")
+	})
+}
+
 // undocumentedStatus is a status no operation documents.
 const undocumentedStatus = http.StatusTeapot
 
@@ -203,7 +212,7 @@ func (g *gen) testFile(o *definitions.Operation) string {
 	for _, h := range call.headers {
 		fmt.Fprintf(&b, "\tif got := r.Header.Get(%q); got != %q {\n\t\tt.Errorf(\"header %s = %%q, want %%q\", got, %q)\n\t}\n", h.name, h.value, h.name, h.value)
 	}
-	if o.Response != nil && o.Response.Type.Type == definitions.RawFile {
+	if o.Response != nil && o.Response.Type.Type == definitions.RawFile && !acceptOption(o) {
 		fmt.Fprintf(&b, "\tif got := r.Header.Get(\"Accept\"); !strings.HasPrefix(got, %q) {\n\t\tt.Errorf(\"Accept = %%q, want %s asked for first\", got)\n\t}\n", o.Response.ContentType, o.Response.ContentType)
 	}
 	if o.Request != nil {

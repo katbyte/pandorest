@@ -63,6 +63,10 @@ type Parameter struct {
 	Style       string  `json:"style"`
 	Explode     *bool   `json:"explode"`
 	Schema      *Schema `json:"schema"`
+	// Added is set for a parameter a workaround added, which no document
+	// can say of its own: the importer keeps an added header named Accept,
+	// where it ignores a document's as OpenAPI says to.
+	Added bool `json:"-"`
 }
 
 // Exploded reports whether an array parameter is sent as one key per value

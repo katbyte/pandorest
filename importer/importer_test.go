@@ -503,6 +503,45 @@ func TestOptionWire(t *testing.T) {
 	}
 }
 
+// A document's own Accept header is ignored, as OpenAPI says, and one a
+// workaround adds is an option: the server chooses its answer by it, so the
+// caller is given the say.
+func TestAcceptOption(t *testing.T) {
+	t.Parallel()
+
+	accept := func(svc *definitions.Service) *definitions.Option {
+		get := *find(svc.Operations(), func(o *definitions.Operation) bool { return o.Name == "GetItems" })
+
+		return find(get.Options, func(o definitions.Option) bool { return o.Name == "Accept" })
+	}
+
+	svc, err := importMini(t, func(s *openapi.Spec) {
+		op := s.Operation("GET", "/Items")
+		op.Parameters = append(op.Parameters, &openapi.Parameter{Name: "Accept", In: openapi.InHeader, Schema: &openapi.Schema{Type: openapi.TypeString}})
+	})
+	if err != nil || accept(svc) != nil {
+		t.Errorf("a document's own Accept header = %+v, %v, want it ignored", accept(svc), err)
+	}
+
+	svc, err = importMini(t, func(s *openapi.Spec) {
+		if err := workarounds.AddParameters(s, []string{"GET /Items"}, workarounds.Param{Name: "Accept", In: openapi.InHeader, Type: openapi.TypeString}, workarounds.Param{Name: "Authorization", In: openapi.InHeader, Type: openapi.TypeString}); err != nil {
+			t.Error(err)
+		}
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if o := accept(svc); o == nil || o.In != definitions.InHeader || o.Field != "Accept" {
+		t.Errorf("an Accept header a workaround added = %+v, want an option", o)
+	}
+
+	// only Accept: the credentials and the body still set the other two
+	get := *find(svc.Operations(), func(o *definitions.Operation) bool { return o.Name == "GetItems" })
+	if o := find(get.Options, func(o definitions.Option) bool { return o.Name == "Authorization" }); o != nil {
+		t.Errorf("an Authorization header a workaround added = %+v, want it ignored", o)
+	}
+}
+
 // What the importer warns about and skips rather than failing on.
 func TestImportWarnings(t *testing.T) {
 	t.Parallel()

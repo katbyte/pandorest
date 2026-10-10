@@ -134,6 +134,18 @@ func (o options) ToQuery() *client.QueryParams {
 	return &out
 }
 
+// accepting is the options of an operation with an Accept option, set.
+type accepting string
+
+func (a accepting) ToHeaders() *client.Headers {
+	out := client.Headers{}
+	out.Append("Accept", string(a))
+
+	return &out
+}
+
+func (accepting) ToQuery() *client.QueryParams { return &client.QueryParams{} }
+
 // A server url is the address the server answers on and nothing more, and a
 // refusal says so in the service's words without repeating a password.
 func TestNew(t *testing.T) {
@@ -244,6 +256,20 @@ func TestAccept(t *testing.T) {
 		if r, _ := got.last(t); r.Header.Get("Accept") != want {
 			t.Errorf("an operation documented to answer %q asked for %q, want %q", documented, r.Header.Get("Accept"), want)
 		}
+	}
+
+	// an Accept among the options is the caller's own, and is the whole header
+	c, got := serve(t, arr, client.APIKey("secret"), answer(http.StatusOK, `{}`))
+	req, err := c.NewRequest(t.Context(), client.RequestOptions{Accept: "image/*", ExpectedStatusCodes: []int{http.StatusOK}, HTTPMethod: http.MethodGet, Path: "/x", OptionsObject: accepting("*/*")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := req.Execute(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+
+	if r, _ := got.last(t); !slices.Equal(r.Header.Values("Accept"), []string{"*/*"}) {
+		t.Errorf("an Accept option asked for %q, want it alone", r.Header.Values("Accept"))
 	}
 }
 

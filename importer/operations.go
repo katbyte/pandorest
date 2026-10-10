@@ -16,6 +16,8 @@ import (
 
 var pathParamRe = regexp.MustCompile(`\{([^}]+)\}`)
 
+const acceptHeader = "Accept"
+
 // importOperations builds every operation, grouped by tag.
 func (im *importer) importOperations() map[string]*definitions.Group {
 	groups := map[string]*definitions.Group{}
@@ -143,8 +145,10 @@ func (im *importer) operation(method, path string, op *openapi.Operation) defini
 			// OpenAPI says a header parameter named Accept, Content-Type or
 			// Authorization is to be ignored: the body, the response and the
 			// credentials set those (TMDB declares Content-Type on its
-			// rating operations anyway)
-			if slices.ContainsFunc([]string{"Accept", "Content-Type", "Authorization"}, func(h string) bool { return strings.EqualFold(h, prm.Name) }) {
+			// rating operations anyway). An Accept a workaround added is
+			// kept: it is there because the server chooses its answer by it
+			kept := prm.Added && strings.EqualFold(prm.Name, acceptHeader)
+			if !kept && slices.ContainsFunc([]string{acceptHeader, "Content-Type", "Authorization"}, func(h string) bool { return strings.EqualFold(h, prm.Name) }) {
 				continue
 			}
 			in = definitions.InHeader

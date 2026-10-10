@@ -1,3 +1,7 @@
+## v0.5.0 (2026-10-10)
+
+- a workaround can give an operation an `Accept` option, for a server that chooses its answer by the header where the choice is the caller's to make call by call (Dockhand's slow actions wait and answer how it went when asked for JSON alone, and answer at once with a job to follow when asked for anything else). The importer keeps a header parameter named `Accept` that a workaround adds (`AddParameters` with `Param{Name: "Accept", In: openapi.InHeader}`), where it ignores a document's own as OpenAPI says to; the option is generated like any header option, and when set its value is the whole header. Nothing moves for a repository that adds none
+
 ## v0.4.0 (2026-10-10)
 
 - a call asks for what its operation is documented to answer: one that answers a file or an event stream sends that type first in `Accept` with JSON after it (`text/event-stream, application/json;q=0.9`), where every call asked for `application/json` alone. A server that chooses its answer by the header (Dockhand's dashboard stream answers JSON to a caller that asks for JSON alone) now sends what its document says. Calls that answer JSON, or nothing, are unchanged
