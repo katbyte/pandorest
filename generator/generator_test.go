@@ -604,7 +604,7 @@ func TestGenerateServiceOptions(t *testing.T) {
 	svc, err := importer.FromSpec(config.Service{
 		Name: "mini", Package: "mini", Naming: config.PathNaming, Auth: "APIKey", PathPrefix: "/api/v3", Words: map[string]string{"testall": "TestAll"},
 		Paging:     &config.Paging{Start: "page", Limit: "pageSize", Items: "records", Total: "totalRecords", ByPage: true},
-		PreferJSON: true, ExpectSameShape: true, SendRequired: true, WrittenWhole: []string{"HostConfig"}, KeepNull: []string{"HostConfig.sslPort"},
+		PreferJSON: true, ExpectSameShape: true, SendRequired: true, WrittenWhole: []string{"HostConfig"}, KeepNull: []string{"HostConfig.sslPort", "HostConfig.bindAddress"},
 	}, spec, nil, nil)
 	if err != nil {
 		t.Fatal(err)
@@ -647,8 +647,9 @@ func TestGenerateServiceOptions(t *testing.T) {
 	// a required field is always sent, and so are a settings object's strings
 	// and numbers; its flags, its lists and a number whose null is kept are not
 	for file, tags := range map[string][]string{
-		"common_model_record.go":         {"`json:\"id,omitempty\"`", "`json:\"title\"`", `Monitored +\*bool +` + "`json:\"monitored\"`"},
-		"hostconfig_model_hostconfig.go": {"`json:\"bindAddress\"`", "`json:\"port\"`", `SslPort +\*int +` + "`json:\"sslPort,omitempty\"`", "`json:\"enableSsl,omitempty\"`", "`json:\"tags,omitzero\"`"},
+		"common_model_record.go": {"`json:\"id,omitempty\"`", "`json:\"title\"`", `Monitored +\*bool +` + "`json:\"monitored\"`"},
+		// a string whose null is kept is a pointer left out when nil, even in a model written whole
+		"hostconfig_model_hostconfig.go": {`BindAddress +\*string +` + "`json:\"bindAddress,omitempty\"`", "`json:\"port\"`", `SslPort +\*int +` + "`json:\"sslPort,omitempty\"`", "`json:\"enableSsl,omitempty\"`", "`json:\"tags,omitzero\"`"},
 	} {
 		src := read(t, dir, file)
 		for _, tag := range tags {

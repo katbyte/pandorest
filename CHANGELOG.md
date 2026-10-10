@@ -1,3 +1,7 @@
+## Unreleased
+
+- `KeepNull` takes a string field as well as a nullable number: the field is held as a `*string`, left out when nil and sent as `""` when it points at one, for a server that keeps whatever a write leaves out and clears a field only when it is sent empty (Dockhand's `publicIp`). A string held by value is left out when empty, so such a field could not be cleared
+
 ## v0.6.0 (2026-10-10)
 
 - add ready-made workarounds to `importer/workarounds`, for the bugs most documents have and each repository patched by hand: `UndeclaredAnswers` (a success with no content), `WrongAnswers` (one answer declared, another given), `WrongStatus` (a create documented as 200 that answers 201), `UndeclaredParameters`, `UndeclaredProperties` (fields the server sends that a schema leaves out) and `NotAPI` (the web interface's paths). A repository gives an `About` (name, service, bug) and says which operations; the patching and the check that the bug is still in the document are here. An answer is said with `JSON`, `JSONString`, `Model`, `ListOf`, `Shape`, `File` or `Text`

@@ -89,7 +89,7 @@ Everything about a service is in its `config.Service`, and everything but the fi
 | `PathPrefix`, `Words` | for path naming: a prefix left out of names (`/api/v3`), and the spelling of run-together segments (`episodefile` as `EpisodeFile`) |
 | `TagSuffix` | trimmed from tags to make group names (`Service` on Emby) |
 | `Paging` | the two query parameters and two answer properties that make an operation a list, and whether it pages by start index or by page number; a list gets a `Complete` method |
-| `KeepNull` | number fields, as `Schema.property`, held as pointers because their null is not their zero (season 0 is the specials) |
+| `KeepNull` | fields, as `Schema.property`, held as pointers because their zero is not their absence: a number whose null is not 0 (season 0 is the specials), or a string a server clears only when it is sent empty, where one held by value is left out when empty |
 | `WrittenWhole` | settings schemas read and written back whole, whose empty strings and zeros are sent rather than left out |
 | `SendRequired` | a property the document requires is always sent |
 | `PreferJSON` | a response that lists JSON beside another type answers JSON, not a file |
@@ -98,7 +98,7 @@ Everything about a service is in its `config.Service`, and everything but the fi
 | `Client` | the source of `client.go` in place of the default, for a service that wants a `New` of another shape; it declares no imports and may use the standard packages generated code does (`errors`, `fmt`, `strings`, `strconv`, `net/http`, `net/url`, `io`, `encoding/json`, `context`, `slices`) |
 | `Notes` | a paragraph for the generated package's documentation |
 
-A name the config gets wrong fails the import rather than doing nothing: a `KeepNull` field that is not a nullable number, a `WrittenWhole` schema that is not there, a `Words` entry that is not its key's letters.
+A name the config gets wrong fails the import rather than doing nothing: a `KeepNull` field that is neither a string nor a nullable number, a `WrittenWhole` schema that is not there, a `Words` entry that is not its key's letters.
 
 ## Pieces
 

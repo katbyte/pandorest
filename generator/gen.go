@@ -212,8 +212,8 @@ func (g *gen) heldType(t definitions.TypeRef) string {
 }
 
 // fieldType is how a model holds a field: a struct model by pointer, a
-// boolean as *bool, a number whose null is kept (KeepsNull) by pointer, the
-// rest by value.
+// boolean as *bool, a number or string whose null is kept (KeepsNull) by
+// pointer, the rest by value.
 func (g *gen) fieldType(f *definitions.Field) string {
 	if f.Type.Type == definitions.Boolean {
 		return "*bool"
@@ -242,7 +242,7 @@ func fieldTag(m *definitions.Model, f *definitions.Field) string {
 	case definitions.List, definitions.Dictionary:
 		return f.JSONName + ",omitzero"
 	case definitions.String, definitions.Integer, definitions.Integer64, definitions.Float, definitions.Double:
-		// a number whose null is kept is a pointer, and its nil is left out
+		// a number or string whose null is kept is a pointer, and its nil is left out
 		if m.WrittenWhole && !f.KeepsNull {
 			return f.JSONName
 		}

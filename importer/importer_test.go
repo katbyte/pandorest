@@ -686,8 +686,9 @@ func TestOptionUndefinedRef(t *testing.T) {
 }
 
 // The fields the service config names in KeepNull are kept apart from their
-// zero, and nothing else is; a name that is no nullable number fails the
-// import, so a stale entry is noticed rather than keeping nothing.
+// zero, and nothing else is; a name that is neither a string nor a nullable
+// number fails the import, so a stale entry is noticed rather than keeping
+// nothing.
 func TestKeepNull(t *testing.T) {
 	t.Parallel()
 
@@ -705,14 +706,14 @@ func TestKeepNull(t *testing.T) {
 		return FromSpec(cfg, spec, nil, func(msg string) { t.Log(msg) })
 	}
 
-	svc, err := importKeeping(t, "Item.Season")
+	svc, err := importKeeping(t, "Item.Season", "Item.Id")
 	if err != nil {
 		t.Fatal(err)
 	}
 	kept := 0
 	for _, m := range svc.Models() {
 		for _, f := range m.Fields {
-			want := m.SchemaName == "Item" && f.JSONName == "Season"
+			want := m.SchemaName == "Item" && (f.JSONName == "Season" || f.JSONName == "Id")
 			if f.KeepsNull != want {
 				t.Errorf("%s.%s keeps null %t, want %t", m.Name, f.JSONName, f.KeepsNull, want)
 			}
@@ -721,16 +722,16 @@ func TestKeepNull(t *testing.T) {
 			}
 		}
 	}
-	if kept != 1 {
-		t.Errorf("%d fields keep null, want Item.Season alone", kept)
+	if kept != 2 {
+		t.Errorf("%d fields keep null, want Item.Season and Item.Id alone", kept)
 	}
 
 	for keep, want := range map[string]string{
-		"Item.Ghost":  "KeepNull names Item.Ghost, a field the document does not have",
-		"Ghost.Id":    "KeepNull names Ghost.Id, a field the document does not have",
-		"ItemSeason":  "KeepNull names ItemSeason, a field the document does not have",
-		"Item.Id":     "KeepNull names Item.Id, which is String, not a number",
-		"Item.Rating": "KeepNull names Item.Rating, which the document no longer declares nullable",
+		"Item.Ghost":    "KeepNull names Item.Ghost, a field the document does not have",
+		"Ghost.Id":      "KeepNull names Ghost.Id, a field the document does not have",
+		"ItemSeason":    "KeepNull names ItemSeason, a field the document does not have",
+		"Item.IsFolder": "KeepNull names Item.IsFolder, which is Boolean, not a string or a number",
+		"Item.Rating":   "KeepNull names Item.Rating, which the document no longer declares nullable",
 	} {
 		if _, err := importKeeping(t, keep); err == nil || !strings.Contains(err.Error(), want) {
 			t.Errorf("KeepNull %s: err = %v, want containing %q", keep, err, want)

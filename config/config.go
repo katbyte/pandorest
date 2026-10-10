@@ -158,12 +158,15 @@ type Service struct {
 	// left out as null, which is not the value that was read. A name the
 	// document does not have fails the import.
 	WrittenWhole []string
-	// KeepNull names the model fields, as Schema.property, whose null is
-	// not their zero, which the SDK holds as pointers where it holds every
-	// other number by value: season 0 is the specials and a parental limit
-	// of 0 is the strictest, so a season or a limit the server leaves out
-	// must not read as either. Each must be a number the document declares
-	// nullable, or the import fails naming it.
+	// KeepNull names the model fields, as Schema.property, whose zero is
+	// not their absence, which the SDK holds as pointers where it holds
+	// every other number and string by value. A number: season 0 is the
+	// specials and a parental limit of 0 is the strictest, so a season or a
+	// limit the server leaves out must not read as either. A string: a
+	// server that keeps whatever a write leaves out and clears a field only
+	// when it is sent empty needs "" to go out, where a string by value is
+	// left out when empty. Each must be a string, or a number the document
+	// declares nullable, or the import fails naming it.
 	KeepNull []string
 
 	// Version, Spec and Definitions are set by Resolve: the document's

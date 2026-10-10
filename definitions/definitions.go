@@ -189,8 +189,9 @@ type Field struct {
 	// the generated field is then always sent, its zero included.
 	Required bool `json:"Required,omitempty"`
 	// KeepsNull makes the generated field a pointer, so the document's null
-	// is told from the number's zero: the fields the service config names
-	// in KeepNull. Every other number is held by value.
+	// is told from a number's zero, and a string left out from one sent
+	// empty: the fields the service config names in KeepNull. Every other
+	// number and string is held by value.
 	KeepsNull bool `json:"KeepsNull,omitempty"`
 }
 

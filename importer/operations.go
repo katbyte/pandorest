@@ -258,27 +258,18 @@ func (im *importer) optionType(s *openapi.Schema) definitions.TypeRef {
 	return str
 }
 
-// jsonMedia reports whether a media type carries JSON. Jellyfin lists
-// text/json, application/*+json and profile variants; Emby pairs every JSON
-// body with an application/xml twin.
-func jsonMedia(ct string) bool { return openapi.JSONMedia(ct) }
-
+// xmlMedia reports whether a media type is XML: Emby pairs every JSON body
+// with an application/xml twin, which is not a file.
 func xmlMedia(ct string) bool {
 	ct = strings.ToLower(ct)
 	return ct == "application/xml" || ct == "text/xml"
-}
-
-// pickJSON returns the JSON media type to name in the definitions: plain
-// application/json when listed, else the first JSON type.
-func pickJSON(content map[string]*openapi.MediaType) (string, bool) {
-	return openapi.PickJSON(content)
 }
 
 func (im *importer) requestBody(method, path, owner string, rb *openapi.RequestBody) *definitions.Body {
 	if rb == nil || len(rb.Content) == 0 {
 		return nil
 	}
-	if ct, ok := pickJSON(rb.Content); ok {
+	if ct, ok := openapi.PickJSON(rb.Content); ok {
 		s := rb.Content[ct].Schema
 		switch {
 		case s == nil:
@@ -311,10 +302,10 @@ func (im *importer) responseBody(method, path, owner string, op *openapi.Operati
 		if len(resp.Content) == 0 {
 			continue
 		}
-		jsonType, hasJSON := pickJSON(resp.Content)
+		jsonType, hasJSON := openapi.PickJSON(resp.Content)
 		other := ""
 		for _, ct := range openapi.SortedKeys(resp.Content) {
-			if !jsonMedia(ct) && !xmlMedia(ct) && other == "" {
+			if !openapi.JSONMedia(ct) && !xmlMedia(ct) && other == "" {
 				other = ct
 			}
 		}
@@ -432,7 +423,7 @@ func (im *importer) sameAnswer(resp *openapi.Response, success *definitions.Body
 	if resp == nil || success == nil || success.Type.Type == definitions.RawFile {
 		return false
 	}
-	ct, ok := pickJSON(resp.Content)
+	ct, ok := openapi.PickJSON(resp.Content)
 	if !ok {
 		return false
 	}
