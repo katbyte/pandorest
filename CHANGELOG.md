@@ -1,3 +1,7 @@
+## v0.3.2 (2026-10-10)
+
+- sweep: a path parameter's fixture is looked up by as many of the literal segments before it as there are, the most of them first, where it was only ever the one: `config/indexer/id` is found before `indexer/id`, so the settings under `/config/indexer/{id}` can be given another id than the indexers at `/indexer/{id}` with no case for it. A fixture keyed by one segment or by the name alone is found as before
+
 ## v0.3.1 (2026-10-10)
 
 - a service words the generated `New` without copying it: `Credential` is what it calls its credential ("API key" names the parameter `apiKey` and refuses an empty one with "API key is required"), and `NewDoc` is New's documentation; a `Client` source is now only for a `New` of another shape

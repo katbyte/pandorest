@@ -216,6 +216,8 @@ sweep.Sweep{
 }.Run(t)
 ```
 
+A path parameter's value is looked up in `Fixtures.Path` by the literal segments before it and its name, the most segments first, then by its name alone: `/api/v3/config/indexer/{id}` finds `config/indexer/id` before `indexer/id` before `id`, so the settings under `config` take another id than the list of the same name. Case does not matter.
+
 Every operation either answers with something or has a `Case` that says why not: skipped, an error status, an answer that does not decode, or an empty one, each with its reason. A case whose operation starts answering fails the sweep, so a stale one is removed, the way a stale workaround is; so does a case that names no GET. A GET the importer adds is swept on the next run with nothing to write. `Strict` also fails any key the model has no field for, for a server whose document is meant to be complete.
 
 ### The base client

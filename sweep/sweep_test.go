@@ -96,6 +96,10 @@ func (s sdk) GetItem(ctx context.Context, id string) (result[item], error) {
 	return get[item](ctx, s.c, "/items/"+url.PathEscape(id), nil)
 }
 
+func (s sdk) GetItemSettings(ctx context.Context, id string) (result[item], error) {
+	return get[item](ctx, s.c, "/config/items/"+url.PathEscape(id), nil)
+}
+
 func (s sdk) GetThing(ctx context.Context, id int) (result[item], error) {
 	return get[item](ctx, s.c, "/things/"+url.PathEscape(strings.Repeat("x", id)), nil)
 }
@@ -142,15 +146,16 @@ type answers map[string]struct {
 }
 
 var served = answers{
-	"/items":   {http.StatusOK, `{"Items": [{"Id": "a", "Name": "one"}], "Total": 1}`},
-	"/items/a": {http.StatusOK, `{"Id": "a", "Name": "one"}`},
-	"/things/": {http.StatusOK, `{"Id": "none"}`},
-	"/none":    {http.StatusOK, `{"Items": [], "Total": 0}`},
-	"/gone":    {http.StatusNotFound, "no"},
-	"/page":    {http.StatusOK, "<html>"},
-	"/lost":    {http.StatusOK, `{"Items": [{"Title": "t", "Year": 1999}], "Total": 1}`},
-	"/extra":   {http.StatusOK, `{"Items": [{"Id": "a", "Year": 1999}], "Total": 1, "More": true}`},
-	"/file":    {http.StatusOK, "bytes"},
+	"/items":          {http.StatusOK, `{"Items": [{"Id": "a", "Name": "one"}], "Total": 1}`},
+	"/items/a":        {http.StatusOK, `{"Id": "a", "Name": "one"}`},
+	"/config/items/1": {http.StatusOK, `{"Id": "1", "Name": "settings"}`},
+	"/things/":        {http.StatusOK, `{"Id": "none"}`},
+	"/none":           {http.StatusOK, `{"Items": [], "Total": 0}`},
+	"/gone":           {http.StatusNotFound, "no"},
+	"/page":           {http.StatusOK, "<html>"},
+	"/lost":           {http.StatusOK, `{"Items": [{"Title": "t", "Year": 1999}], "Total": 1}`},
+	"/extra":          {http.StatusOK, `{"Items": [{"Id": "a", "Year": 1999}], "Total": 1, "More": true}`},
+	"/file":           {http.StatusOK, "bytes"},
 }
 
 func str() definitions.TypeRef { return definitions.TypeRef{Type: definitions.String} }
@@ -173,11 +178,13 @@ func service() *definitions.Service {
 	}
 	one := op("GetItem", "/items/{id}", ref("Item"))
 	one.PathParameters = []definitions.PathParameter{{Name: "id", Argument: "id", Type: str()}}
+	settings := op("GetItemSettings", "/config/items/{id}", ref("Item"))
+	settings.PathParameters = []definitions.PathParameter{{Name: "id", Argument: "id", Type: str()}}
 	thing := op("GetThing", "/things/{id}", ref("Item"))
 	thing.PathParameters = []definitions.PathParameter{{Name: "id", Argument: "id", Type: definitions.TypeRef{Type: definitions.Integer}}}
 
 	return &definitions.Service{Name: "mini", Groups: []definitions.Group{{Name: "Items", Operations: []definitions.Operation{
-		list, one, thing,
+		list, one, settings, thing,
 		op("GetNone", "/none", ref("Page")), op("GetGone", "/gone", ref("Item")), op("GetPage", "/page", ref("Item")),
 		op("GetLost", "/lost", ref("Page")), op("GetExtra", "/extra", ref("Page")),
 		op("GetFile", "/file", &definitions.Body{ContentType: "application/octet-stream", Type: definitions.TypeRef{Type: definitions.RawFile}}),
@@ -209,7 +216,7 @@ func newSweep(t *testing.T, served answers) (s sweep.Sweep, queries *[]string) {
 
 	return sweep.Sweep{
 		Definitions: service(), Client: sdk{c}, StatusCode: client.StatusCode,
-		Fixtures: sweep.Fixtures{Path: map[string]string{"Items/Id": "a", "id": "0"}},
+		Fixtures: sweep.Fixtures{Path: map[string]string{"Items/Id": "a", "config/items/id": "1", "id": "0"}},
 	}, &seen
 }
 
@@ -240,6 +247,7 @@ func TestOperation(t *testing.T) {
 	}{
 		{name: "an answer with something in it", op: "GetItems"},
 		{name: "a path parameter from the fixtures, by its segment", op: "GetItem"},
+		{name: "a path parameter by the segments before it, the most of them first", op: "GetItemSettings"},
 		{name: "a numeric path parameter, by its name", op: "GetThing"},
 		{name: "a file", op: "GetFile"},
 
@@ -367,7 +375,7 @@ func TestRun(t *testing.T) {
 	s.Run(t)
 
 	// every GET but the skipped one was called, and the DELETE was not
-	if len(*queries) != 8 || slices.ContainsFunc(*queries, func(q string) bool { return strings.HasPrefix(q, "/lost") }) {
+	if len(*queries) != 9 || slices.ContainsFunc(*queries, func(q string) bool { return strings.HasPrefix(q, "/lost") }) {
 		t.Errorf("the server saw %d requests: %q", len(*queries), *queries)
 	}
 }

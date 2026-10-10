@@ -91,11 +91,16 @@ type Case struct {
 }
 
 // Fixtures resolves arguments from the suite's fixtures. A path parameter is
-// looked up in Path as "<segment>/<param>", the literal path segment before
+// looked up in Path as "<segments>/<param>", the literal path segments before
 // the placeholder and the placeholder's name (Items/Id, Users/Id), then as
-// the name alone; both case-insensitively. A required option is looked up by
-// name in Options; Always holds options set whenever an operation has them
-// (the user an API key has to name for anything user-scoped).
+// the name alone; all case-insensitively. The segments are as many as stand
+// between the placeholder and the one before it, and the most of them wins:
+// /api/v3/config/indexer/{id} is api/v3/config/indexer/id, then
+// v3/config/indexer/id, config/indexer/id and indexer/id, so the settings
+// under config can be given another id than the list of the same name. A
+// required option is looked up by name in Options; Always holds options set
+// whenever an operation has them (the user an API key has to name for
+// anything user-scoped).
 type Fixtures struct {
 	Path    map[string]string
 	Options map[string]string
@@ -108,8 +113,14 @@ func (f Fixtures) resolvePath(path, param string) (string, bool) {
 		if !strings.Contains(seg, "{"+param+"}") {
 			continue
 		}
-		if i > 0 && !strings.Contains(segments[i-1], "{") {
-			if v, ok := lookupFold(f.Path, segments[i-1]+"/"+param); ok {
+
+		from := i
+		for from > 0 && !strings.Contains(segments[from-1], "{") {
+			from--
+		}
+
+		for ; from < i; from++ {
+			if v, ok := lookupFold(f.Path, strings.Join(segments[from:i], "/")+"/"+param); ok {
 				return v, true
 			}
 		}
