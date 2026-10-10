@@ -218,11 +218,15 @@ sweep.Sweep{
 
 A path parameter's value is looked up in `Fixtures.Path` by the literal segments before it and its name, the most segments first, then by its name alone: `/api/v3/config/indexer/{id}` finds `config/indexer/id` before `indexer/id` before `id`, so the settings under `config` take another id than the list of the same name. Case does not matter.
 
+An event stream (`text/event-stream`) never ends, so the sweep does not read one whole: it reads as far as the first event and hangs up. One that sends no event in `EventWait`, ten seconds unless set, answered with nothing, and is held to that like an empty list.
+
 Every operation either answers with something or has a `Case` that says why not: skipped, an error status, an answer that does not decode, or an empty one, each with its reason. A case whose operation starts answering fails the sweep, so a stale one is removed, the way a stale workaround is; so does a case that names no GET. A GET the importer adds is swept on the next run with nothing to write. `Strict` also fails any key the model has no field for, for a server whose document is meant to be complete.
 
 ### The base client
 
 Generated code sends every request through the `client` package, after go-azure-sdk's `sdk/client`. It is built on [go-kt](https://github.com/katbyte/go-kt)'s `chttp`: a read is asked again for a dropped connection or a gateway's answer and a write is sent once, an answer is read whole up to a limit, and every exchange is traced to a logger when one is handed in, with the credentials hidden.
+
+A call asks for what its operation is documented to answer. One that answers JSON, or nothing, sends `Accept: application/json`. One that answers a file or an event stream asks for that type first and JSON after it (`Accept: text/event-stream, application/json;q=0.9`), because some servers choose their answer by the header: asked for JSON alone, they send JSON where the document says a stream. JSON stays in the header so that a refusal can still be written as JSON.
 
 What is common to every service is in the package. What is one service's own about being talked to is a `client.Service`, which the repository writes by hand in a file beside the generated ones and names in its config (`ClientService`). The file is the repository's: it has no generated header, so `generate` never writes it or removes it. It needs no exceptions from a linter: the package comment it would be asked for is in `doc.go`, and `Example` is a host (`nas:7878`, shown as `http://nas:7878`) or, for a hosted API, a whole address.
 
@@ -264,7 +268,7 @@ An error for an undocumented status is a `*client.StatusError`: chttp's, which i
 
 `Client.HTTPClient` is there for the generated tests, which put their canned server's own client in it. An application that wants to see or shape the traffic passes `client.WithTransport` instead, and keeps the retries and the trace.
 
-A repository can still keep a base client of its own and name it in `ClientImport`. Generated code calls `New(baseURL, authorizer, ...Option)`, `RequestOptions`, `NewRequest`, `Marshal`, `SetBody`, `Execute`, `Response.Unmarshal`, `Headers` and `QueryParams` with `Append`, `CSV`, `JSONObject`, `DeepObject`, `DefaultPageSize` and `StatusCode`, and its tests set `HTTPClient` and read `BaseURL`.
+A repository can still keep a base client of its own and name it in `ClientImport`. Generated code calls `New(baseURL, authorizer, ...Option)`, `RequestOptions` (with `Accept` for an operation that answers a file), `NewRequest`, `Marshal`, `SetBody`, `Execute`, `Response.Unmarshal`, `Headers` and `QueryParams` with `Append`, `CSV`, `JSONObject`, `DeepObject`, `DefaultPageSize` and `StatusCode`, and its tests set `HTTPClient` and read `BaseURL`.
 
 ## What was left out of Pandora
 

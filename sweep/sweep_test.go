@@ -1,6 +1,7 @@
 package sweep_test
 
 import (
+	"cmp"
 	"context"
 	"io"
 	"net/http"
@@ -9,6 +10,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/katbyte/pandorest/client"
 	"github.com/katbyte/pandorest/definitions"
@@ -124,8 +126,8 @@ func (s sdk) GetExtra(ctx context.Context) (result[page], error) {
 	return get[page](ctx, s.c, "/extra", nil)
 }
 
-func (s sdk) GetFile(ctx context.Context) (res file, err error) {
-	req, err := s.c.NewRequest(ctx, client.RequestOptions{ExpectedStatusCodes: []int{http.StatusOK}, HTTPMethod: http.MethodGet, Path: "/file", StreamResponse: true})
+func stream(ctx context.Context, c *client.Client, path string) (res file, err error) {
+	req, err := c.NewRequest(ctx, client.RequestOptions{ExpectedStatusCodes: []int{http.StatusOK}, HTTPMethod: http.MethodGet, Path: path, StreamResponse: true})
 	if err != nil {
 		return res, err
 	}
@@ -136,6 +138,20 @@ func (s sdk) GetFile(ctx context.Context) (res file, err error) {
 
 	return res, err
 }
+
+func (s sdk) GetFile(ctx context.Context) (file, error) { return stream(ctx, s.c, "/file") }
+
+func (s sdk) GetEvents(ctx context.Context) (file, error) { return stream(ctx, s.c, "/events") }
+
+func (s sdk) GetFeed(ctx context.Context) (file, error) { return stream(ctx, s.c, "/events") }
+
+func (s sdk) GetQuiet(ctx context.Context) (file, error) { return stream(ctx, s.c, "/quiet") }
+
+func (s sdk) GetEnded(ctx context.Context) (file, error) { return stream(ctx, s.c, "/ended") }
+
+func (s sdk) GetDropped(ctx context.Context) (file, error) { return stream(ctx, s.c, "/dropped") }
+
+func (s sdk) GetNoStream(ctx context.Context) (file, error) { return stream(ctx, s.c, "/nostream") }
 
 func (sdk) GetOdd(context.Context) string { return "not a generated method" }
 
@@ -156,6 +172,32 @@ var served = answers{
 	"/lost":           {http.StatusOK, `{"Items": [{"Title": "t", "Year": 1999}], "Total": 1}`},
 	"/extra":          {http.StatusOK, `{"Items": [{"Id": "a", "Year": 1999}], "Total": 1, "More": true}`},
 	"/file":           {http.StatusOK, "bytes"},
+}
+
+// What a stream's server does once it has sent what it has: keep the
+// connection open, as an event stream does, end the answer, or drop the
+// connection.
+const (
+	hold = iota
+	end
+	drop
+)
+
+// streams is what the server answers each stream's path with: a content
+// type, what it sends at once, and what it does then.
+var streams = map[string]struct {
+	contentType, body string
+	then              int
+}{
+	"/events":   {"text/event-stream; charset=utf-8", ": connected\n\nevent: tick\ndata: {\"n\": 1}\n\n", hold},
+	"/quiet":    {"text/event-stream", ": keep-alive\n\nevent: tick\n\n", hold},
+	"/ended":    {"text/event-stream", ": bye\n\n", end},
+	"/dropped":  {"text/event-stream", "data: half an ev", drop},
+	"/nostream": {"application/json", `{"Id": "a"}`, end},
+}
+
+func events() *definitions.Body {
+	return &definitions.Body{ContentType: "text/event-stream", Type: definitions.TypeRef{Type: definitions.RawFile}}
 }
 
 func str() definitions.TypeRef { return definitions.TypeRef{Type: definitions.String} }
@@ -188,6 +230,7 @@ func service() *definitions.Service {
 		op("GetNone", "/none", ref("Page")), op("GetGone", "/gone", ref("Item")), op("GetPage", "/page", ref("Item")),
 		op("GetLost", "/lost", ref("Page")), op("GetExtra", "/extra", ref("Page")),
 		op("GetFile", "/file", &definitions.Body{ContentType: "application/octet-stream", Type: definitions.TypeRef{Type: definitions.RawFile}}),
+		op("GetEvents", "/events", events()),
 		{Name: "DeleteItem", Method: http.MethodDelete, Path: "/items/{id}", ExpectedStatusCodes: []int{http.StatusNoContent}},
 	}}}}
 }
@@ -200,6 +243,21 @@ func newSweep(t *testing.T, served answers) (s sweep.Sweep, queries *[]string) {
 	var seen []string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		seen = append(seen, r.URL.Path+"?"+r.URL.RawQuery)
+		if s, ok := streams[r.URL.Path]; ok {
+			w.Header().Set("Content-Type", s.contentType)
+			_, _ = io.WriteString(w, s.body)
+			_ = http.NewResponseController(w).Flush()
+
+			switch s.then {
+			case hold:
+				<-r.Context().Done()
+			case drop:
+				panic(http.ErrAbortHandler)
+			}
+
+			return
+		}
+
 		a, ok := served[r.URL.Path]
 		if !ok {
 			a.status, a.body = http.StatusInternalServerError, "nothing is served there"
@@ -301,6 +359,62 @@ func TestOperation(t *testing.T) {
 	}
 }
 
+// An event stream never ends, so the sweep reads one as far as its first
+// event and hangs up; one that sends none while the sweep waits, or ends
+// without one, answered with nothing, and one that is not an event stream at
+// all, or breaks off, is a failure.
+func TestEventStream(t *testing.T) {
+	t.Parallel()
+
+	for _, tc := range []struct {
+		name string
+		op   string
+		// documented is the content type the document gives the operation, an event stream unless set
+		documented string
+		c          sweep.Case
+		fail, note string
+	}{
+		{name: "a stream that sends an event", op: "GetEvents", note: "GET /events: an event stream, read as far as its first event and no further"},
+		{name: "a stream its document calls a file", op: "GetFeed", documented: "application/octet-stream", note: "an event stream, read as far as its first event"},
+		{name: "a stream that sends no event", op: "GetQuiet", fail: "GET /quiet is an event stream that sent no event in 150ms, which proves only its status"},
+		{name: "one that sends none, as its case says", op: "GetQuiet", c: sweep.Case{Empty: "nothing happens on a fresh server"}, note: "answers with nothing, as expected: nothing happens on a fresh server"},
+		{name: "one that may send none", op: "GetQuiet", c: sweep.Case{MayBeEmpty: "it follows what the server is doing"}, note: "may answer with nothing (it did: true)"},
+		{name: "a stream its case says sends none", op: "GetEvents", c: sweep.Case{Empty: "stale"}, fail: "GET /events now answers with something; drop its Empty case (stale)"},
+		{name: "a stream that ends without an event", op: "GetEnded", fail: "GET /ended is an event stream that sent no event"},
+		{name: "a stream that breaks off", op: "GetDropped", fail: "GET /dropped: reading the event stream: "},
+		{name: "an answer that is no event stream", op: "GetNoStream", fail: "GET /nostream: answers application/json where its document says text/event-stream"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			s, _ := newSweep(t, served)
+			body := events()
+			body.ContentType = cmp.Or(tc.documented, body.ContentType)
+			s.Definitions.Groups[0].Operations = append(s.Definitions.Groups[0].Operations, definitions.Operation{Name: tc.op, Method: http.MethodGet, Path: "/" + strings.ToLower(strings.TrimPrefix(tc.op, "Get")), Response: body, ExpectedStatusCodes: []int{http.StatusOK}})
+			s.Cases = map[string]sweep.Case{tc.op: tc.c}
+
+			// a stream with an event is hung up on as soon as it comes, so only one with none waits this long
+			if tc.op != "GetEvents" && tc.op != "GetFeed" {
+				s.EventWait = 150 * time.Millisecond
+			}
+
+			ops := s.Definitions.Operations()
+			out := s.Operation(t.Context(), ops[len(ops)-1])
+
+			switch {
+			case tc.fail != "":
+				if !strings.Contains(strings.Join(out.Failures, "\n"), tc.fail) {
+					t.Errorf("failures = %q, want one containing %q", out.Failures, tc.fail)
+				}
+			case len(out.Failures) > 0:
+				t.Errorf("failures = %q, want a pass", out.Failures)
+			case !strings.Contains(strings.Join(out.Notes, "\n"), tc.note):
+				t.Errorf("notes = %q, want one containing %q", out.Notes, tc.note)
+			}
+		})
+	}
+}
+
 // A strict sweep also fails a key the model has no field for; a file and an
 // answer the model holds raw have none.
 func TestStrict(t *testing.T) {
@@ -375,7 +489,7 @@ func TestRun(t *testing.T) {
 	s.Run(t)
 
 	// every GET but the skipped one was called, and the DELETE was not
-	if len(*queries) != 9 || slices.ContainsFunc(*queries, func(q string) bool { return strings.HasPrefix(q, "/lost") }) {
+	if len(*queries) != 10 || slices.ContainsFunc(*queries, func(q string) bool { return strings.HasPrefix(q, "/lost") }) {
 		t.Errorf("the server saw %d requests: %q", len(*queries), *queries)
 	}
 }

@@ -219,6 +219,34 @@ func TestRequest(t *testing.T) {
 	}
 }
 
+// A request asks for what its operation is documented to answer: JSON alone
+// unless that is something else, which is then asked for first with JSON
+// after it. A server may choose its answer by the header, and one that tests
+// for "application/json" alone must not find it alone on a call for a stream.
+func TestAccept(t *testing.T) {
+	t.Parallel()
+
+	for documented, want := range map[string]string{
+		"":                  "application/json",
+		"application/json":  "application/json",
+		"text/event-stream": "text/event-stream, application/json;q=0.9",
+		"image/*":           "image/*, application/json;q=0.9",
+	} {
+		c, got := serve(t, arr, client.APIKey("secret"), answer(http.StatusOK, `{}`))
+		req, err := c.NewRequest(t.Context(), client.RequestOptions{Accept: documented, ExpectedStatusCodes: []int{http.StatusOK}, HTTPMethod: http.MethodGet, Path: "/x"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := req.Execute(t.Context()); err != nil {
+			t.Fatal(err)
+		}
+
+		if r, _ := got.last(t); r.Header.Get("Accept") != want {
+			t.Errorf("an operation documented to answer %q asked for %q, want %q", documented, r.Header.Get("Accept"), want)
+		}
+	}
+}
+
 // How a credential travels is the authorizer's, and one that sends nothing
 // sends nothing.
 func TestAuthorizers(t *testing.T) {

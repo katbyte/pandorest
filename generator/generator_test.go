@@ -190,6 +190,7 @@ func TestGenerate(t *testing.T) {
 			`fmt.Sprintf("/Items/%s/Images/%s/%d", url.PathEscape(itemId), url.PathEscape(string(imageType)), index),`,
 			`fmt.Sprintf("/Sync/%d/%s", jobId, strconv.FormatFloat(ratio, 'f', -1, 64))`,
 			"StreamResponse: true,",
+			`Accept: "image/*",`,
 			"http.StatusNoContent,",
 			"// Deprecated: the document marks this operation deprecated.",
 			"// Deprecated: the document marks this parameter deprecated.",

@@ -1,3 +1,9 @@
+## v0.4.0 (2026-10-10)
+
+- a call asks for what its operation is documented to answer: one that answers a file or an event stream sends that type first in `Accept` with JSON after it (`text/event-stream, application/json;q=0.9`), where every call asked for `application/json` alone. A server that chooses its answer by the header (Dockhand's dashboard stream answers JSON to a caller that asks for JSON alone) now sends what its document says. Calls that answer JSON, or nothing, are unchanged
+- generator (breaking for a base client of a repository's own): a method that answers a file sets `Accept` in its `RequestOptions`, so such a client needs the field; a regenerated package gains one line in each such method and, in its test, the check of the header (three lines, and the `strings` import where the test had none)
+- sweep: an event stream (`text/event-stream`, by its document or by what the server answers) is read as far as its first event and then hung up on, where it was read like a file and ran out of time, so that each one needed a `Skip`. One that sends no event in `EventWait` (ten seconds unless set), or ends without one, is an answer with nothing in it and takes an `Empty` or `MayBeEmpty` case like an empty list; one that answers another content type than the event stream its document says, or breaks off part way, fails
+
 ## v0.3.2 (2026-10-10)
 
 - sweep: a path parameter's fixture is looked up by as many of the literal segments before it as there are, the most of them first, where it was only ever the one: `config/indexer/id` is found before `indexer/id`, so the settings under `/config/indexer/{id}` can be given another id than the indexers at `/indexer/{id}` with no case for it. A fixture keyed by one segment or by the name alone is found as before

@@ -254,6 +254,10 @@ func (g *gen) writeMethod(b *strings.Builder, o *definitions.Operation, response
 		o.Name, strings.Join(append([]string{"ctx context.Context"}, params...), ", "), responseType)
 
 	b.WriteString("\topts := client.RequestOptions{\n")
+	if o.Response != nil && o.Response.Type.Type == definitions.RawFile {
+		// a server may choose its answer by what it is asked for, so a call asks for what its document says it answers
+		fmt.Fprintf(b, "\t\tAccept: %q,\n", o.Response.ContentType)
+	}
 	if o.Request != nil {
 		fmt.Fprintf(b, "\t\tContentType: %q,\n", o.Request.ContentType)
 	}
