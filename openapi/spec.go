@@ -152,20 +152,20 @@ type Response struct {
 
 // Schema is a JSON schema object, as far as the two specs use it.
 type Schema struct {
-	Ref         string             `json:"$ref"`
-	Type        string             `json:"type"`
-	Format      string             `json:"format"`
-	Description string             `json:"description"`
-	Nullable    bool               `json:"nullable"`
-	Enum        []json.RawMessage  `json:"enum"`
-	Properties  map[string]*Schema `json:"properties"`
+	Ref         string             `json:"$ref,omitempty"`
+	Type        string             `json:"type,omitempty"`
+	Format      string             `json:"format,omitempty"`
+	Description string             `json:"description,omitempty"`
+	Nullable    bool               `json:"nullable,omitempty"`
+	Enum        []json.RawMessage  `json:"enum,omitempty"`
+	Properties  map[string]*Schema `json:"properties,omitempty"`
 	// Required names the properties an object must carry.
-	Required             []string        `json:"required"`
-	Items                *Schema         `json:"items"`
-	AdditionalProperties json.RawMessage `json:"additionalProperties"`
-	AllOf                []*Schema       `json:"allOf"`
-	OneOf                []*Schema       `json:"oneOf"`
-	AnyOf                []*Schema       `json:"anyOf"`
+	Required             []string        `json:"required,omitempty"`
+	Items                *Schema         `json:"items,omitempty"`
+	AdditionalProperties json.RawMessage `json:"additionalProperties,omitempty"`
+	AllOf                []*Schema       `json:"allOf,omitempty"`
+	OneOf                []*Schema       `json:"oneOf,omitempty"`
+	AnyOf                []*Schema       `json:"anyOf,omitempty"`
 }
 
 // SchemaRefPrefix is how a `$ref` names a component schema.
@@ -342,7 +342,11 @@ func (s *Spec) EachSchema(fn func(where, path string, schema *Schema)) {
 			}
 		}
 		if additional, ok := schema.Additional(); ok {
+			// the value schema is decoded fresh each time, so what fn changed is written back
 			walk(where, path, additional)
+			if raw, err := json.Marshal(additional); err == nil && string(raw) != "{}" {
+				schema.AdditionalProperties = raw
+			}
 		}
 	}
 	for _, name := range SortedKeys(s.Components.Schemas) {

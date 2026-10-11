@@ -661,7 +661,7 @@ func (s Sweep) call(ctx context.Context, hangUp context.CancelFunc, op *definiti
 		return a, nil
 	}
 
-	return judgeJSON(body, results[0].FieldByName("Model")), nil
+	return judgeJSON(body, results[0].FieldByName("Answer")), nil
 }
 
 func isEventStream(contentType string) bool {
@@ -763,8 +763,8 @@ func judgeJSON(body []byte, model reflect.Value) answer {
 		return a
 	}
 	a.dropped = dropped(sent, model, "the answer")
-	a.unread = unreadDates(model, "Model", nil)
-	a.unknown = unknownValues(model, "Model", "", nil)
+	a.unread = unreadDates(model, "Answer", nil)
+	a.unknown = unknownValues(model, "Answer", "", nil)
 	if len(a.dropped) > maxDropped {
 		a.dropped = append(a.dropped[:maxDropped], fmt.Sprintf("%d more places", len(a.dropped)-maxDropped))
 	}

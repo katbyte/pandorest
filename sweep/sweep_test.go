@@ -41,7 +41,7 @@ type page struct {
 // that answers a file does.
 type result[M any] struct {
 	HttpResponse *http.Response //nolint:revive,staticcheck // go-azure-sdk's spelling, which generated code keeps
-	Model        *M
+	Answer       *M
 }
 
 type file struct {
@@ -121,9 +121,9 @@ func get[M any](ctx context.Context, c *client.Client, path string, o client.Opt
 		return res, err
 	}
 	var model M
-	res.Model = &model
+	res.Answer = &model
 
-	return res, resp.Unmarshal(res.Model)
+	return res, resp.Unmarshal(res.Answer)
 }
 
 func (s sdk) GetItems(ctx context.Context, o options) (result[page], error) {
@@ -595,7 +595,7 @@ func TestUnreadDate(t *testing.T) {
 		body   string
 	}{http.StatusOK, `{"Id": "a", "Name": "one", "Seen": "04/03/2024"}`}
 	s, _ := newSweep(t, replies)
-	if out := s.Operation(t.Context(), operation(t, s, "GetItem")); len(out.Failures) != 1 || !strings.Contains(out.Failures[0], `GET /items/{id} answers a date no layout reads: Model.Seen = "04/03/2024"; add the layout to the service's Dates or Days`) {
+	if out := s.Operation(t.Context(), operation(t, s, "GetItem")); len(out.Failures) != 1 || !strings.Contains(out.Failures[0], `GET /items/{id} answers a date no layout reads: Answer.Seen = "04/03/2024"; add the layout to the service's Dates or Days`) {
 		t.Errorf("an unread date = %q", out.Failures)
 	}
 }
@@ -611,7 +611,7 @@ func TestUnknownValue(t *testing.T) {
 		body   string
 	}{http.StatusOK, `{"Id": "a", "Name": "one", "Kind": "song"}`}
 	s, _ := newSweep(t, replies)
-	if out := s.Operation(t.Context(), operation(t, s, "GetItem")); len(out.Failures) != 1 || !strings.Contains(out.Failures[0], `GET /items/{id} answers a value its enum does not list: Model.Kind = "song" (kind, at Kind); add it to the enum's values, or narrow the enum's In to leave the place out`) {
+	if out := s.Operation(t.Context(), operation(t, s, "GetItem")); len(out.Failures) != 1 || !strings.Contains(out.Failures[0], `GET /items/{id} answers a value its enum does not list: Answer.Kind = "song" (kind, at Kind); add it to the enum's values, or narrow the enum's In to leave the place out`) {
 		t.Errorf("an unknown value = %q", out.Failures)
 	}
 }

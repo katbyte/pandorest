@@ -81,9 +81,15 @@ func TestReadyMade(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	applied, err := workarounds.Apply(readyMade(), "buggy", spec, nil)
+	var logged []string
+	applied, err := workarounds.Apply(readyMade(), "buggy", spec, func(msg string) { logged = append(logged, msg) })
 	if err != nil || len(applied) != 10 || applied[0] != "buggy-ui-routes" {
 		t.Fatalf("Apply = %v, %v", applied, err)
+	}
+	for _, want := range []string{"buggy: applied workaround buggy-thing-dates: createdAt in 1 place", "buggy: applied workaround buggy-thing-days: born in 1 place", "buggy: applied workaround buggy-thing-status: status as ThingStatus in 1 place", "buggy: applied workaround buggy-ui-routes"} {
+		if !slices.Contains(logged, want) {
+			t.Errorf("the log lacks %q:\n%s", want, strings.Join(logged, "\n"))
+		}
 	}
 	if thing := spec.Components.Schemas["Thing"].Properties; thing["createdAt"].Format != "date-time" || thing["born"].Format != "date" || thing["seenAt"].Format != "date-time" || thing["stamp"].Format != openapi.FormatUnixSeconds {
 		t.Errorf("the dates are not declared: createdAt %q, born %q, seenAt %q, stamp %q", thing["createdAt"].Format, thing["born"].Format, thing["seenAt"].Format, thing["stamp"].Format)
@@ -242,6 +248,21 @@ func TestUndeclaredEnumsWithoutSchemas(t *testing.T) {
 	rows := spec.Paths["/stacks"].Get.Responses["200"].Content["application/json"].Schema.Items.Properties
 	if rows["status"].RefName() != "StackStatus" || rows["containerDetails"].Items.Properties["status"].RefName() != "" {
 		t.Errorf("the top status %+v, the nested %+v", rows["status"], rows["containerDetails"].Items.Properties["status"])
+	}
+
+	// a property under a map's values is reached too (Dockhand's stack sources, keyed by name)
+	spec, err = openapi.Parse([]byte(`{"openapi": "3.0.1", "info": {"title": "Bare", "version": "1"}, "paths": {
+    "/sources": {"get": {"operationId": "GetSources", "responses": {"200": {"content": {"application/json": {"schema": {"type": "object", "additionalProperties": {"type": "object", "properties": {"sourceType": {"type": "string"}}}}}}}}}}}}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	byName := workarounds.UndeclaredEnums(workarounds.About{Name: "bare-source-type", Service: "bare", Bug: "a source's type"}, map[string]workarounds.Enum{"sourceType": {Values: []string{"internal", "external", "git"}}})
+	if err := byName.Apply(spec); err != nil {
+		t.Fatal(err)
+	}
+	values, _ := spec.Paths["/sources"].Get.Responses["200"].Content["application/json"].Schema.Additional()
+	if values.Properties["sourceType"].RefName() != "SourceType" {
+		t.Errorf("under a map's values: %+v", values.Properties["sourceType"])
 	}
 
 	spec, _ = openapi.Parse([]byte(`{"openapi": "3.0.1", "info": {"title": "Bare", "version": "1"}, "paths": {

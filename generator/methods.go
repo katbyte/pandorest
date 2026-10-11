@@ -69,6 +69,17 @@ func (g *gen) groupMethodFile(o *definitions.Operation) string {
 	return g.fileHeader(b.String())
 }
 
+// embedded is the struct model a response embeds beside Answer, so that a
+// caller may read res.Name where it would read res.Answer.Name; "" for an
+// answer that is not a struct model (a list, a string, raw JSON, a union).
+func (g *gen) embedded(o *definitions.Operation) string {
+	if o.Response == nil || o.Response.Type.Type != definitions.Reference || !g.isStruct(o.Response.Type.ReferenceName) {
+		return ""
+	}
+
+	return g.typeName(o.Response.Type.ReferenceName)
+}
+
 // responseModel is how the response struct holds the model: pointers for a
 // struct, a constant or a primitive, the value for slices, maps and raw JSON.
 func (g *gen) responseModel(o *definitions.Operation) (typ string, pointer bool) {
@@ -100,11 +111,19 @@ func (g *gen) writeResponse(b *strings.Builder, o *definitions.Operation, respon
 		fmt.Fprintf(b, "//\n// The operation answers %s, left unread in HttpResponse.Body. WriteTo copies\n// it out and Bytes reads it whole up to a size, each closing it; Reader hands it over\n// for the caller to read and close. After any of them the body is spent. A failed call\n// has no open body: the base client reads a refusal and closes it.\n", o.Response.ContentType)
 	}
 	if o.Response.Text() {
-		fmt.Fprintf(b, "//\n// The operation answers text (%s), which Model holds as it was sent.\n", o.Response.ContentType)
+		fmt.Fprintf(b, "//\n// The operation answers text (%s), which Answer holds as it was sent.\n", o.Response.ContentType)
+	}
+	embedded := g.embedded(o)
+	if embedded != "" {
+		fmt.Fprintf(b, "//\n// Answer is the %s answered, nil when the server answered none (a 204), and the\n// same record is embedded, so res.Answer.Name may be read as res.Name.\n", embedded)
+		g.checkEmbedded(o)
 	}
 	fmt.Fprintf(b, "type %s struct {\n\tHttpResponse *http.Response\n", responseType)
 	if typ, _ := g.responseModel(o); typ != "" {
-		fmt.Fprintf(b, "\tModel %s\n", typ)
+		fmt.Fprintf(b, "\tAnswer %s\n", typ)
+	}
+	if embedded != "" {
+		fmt.Fprintf(b, "\t*%s\n", embedded)
 	}
 	b.WriteString("}\n\n")
 	if file {
@@ -181,6 +200,33 @@ func (r %[1]s) Bytes(max int64) ([]byte, error) {
 }
 
 `
+
+// embeddedField is the name an embedded type is reached by: its own, without
+// the package a tag's package qualifies it with.
+func embeddedField(typ string) string {
+	if _, name, ok := strings.Cut(typ, "."); ok {
+		return name
+	}
+
+	return typ
+}
+
+// checkEmbedded refuses a struct answer whose own field would hide the
+// response's, or whose name the response already uses, since Go would pick
+// the response's silently.
+func (g *gen) checkEmbedded(o *definitions.Operation) {
+	name := o.Response.Type.ReferenceName
+	if name == "Answer" || name == "HttpResponse" {
+		g.clashes = append(g.clashes, fmt.Sprintf("the model %s is answered by %s, whose response has a field by that name: rename it with a workaround", name, o.Name))
+	}
+	if m := g.models[name]; m != nil {
+		for i := range m.Fields {
+			if f := m.Fields[i].Name; f == "Answer" || f == "HttpResponse" {
+				g.clashes = append(g.clashes, fmt.Sprintf("%s.%s would be hidden by the field of the same name on %s's response, which embeds the model: rename it with a workaround", name, f, o.Name))
+			}
+		}
+	}
+}
 
 // optionType is how the options struct holds an option: a pointer for a
 // boolean or a number, so false and 0 can be sent (a series' specials are
@@ -534,13 +580,17 @@ func (g *gen) writeMethod(b *strings.Builder, o *definitions.Operation, response
 		switch {
 		case o.Response.Text():
 			// text is held as it was sent, whatever the server calls it
-			b.WriteString("\tvar model string\n\tresult.Model = &model\n")
-			b.WriteString("\tif err = resp.Text(result.Model); err != nil {\n\t\treturn\n\t}\n\n")
+			b.WriteString("\tvar answer string\n\tresult.Answer = &answer\n")
+			b.WriteString("\tif err = resp.Text(result.Answer); err != nil {\n\t\treturn\n\t}\n\n")
 		case pointer:
-			fmt.Fprintf(b, "\tvar model %s\n\tresult.Model = &model\n", strings.TrimPrefix(typ, "*"))
-			b.WriteString("\tif err = resp.Unmarshal(result.Model); err != nil {\n\t\treturn\n\t}\n\n")
+			fmt.Fprintf(b, "\tvar answer %s\n\tresult.Answer = &answer\n", strings.TrimPrefix(typ, "*"))
+			b.WriteString("\tif err = resp.Unmarshal(result.Answer); err != nil {\n\t\treturn\n\t}\n")
+			if embedded := g.embedded(o); embedded != "" {
+				fmt.Fprintf(b, "\tresult.%s = result.Answer\n", embeddedField(embedded))
+			}
+			b.WriteString("\n")
 		default:
-			b.WriteString("\tif err = resp.Unmarshal(&result.Model); err != nil {\n\t\treturn\n\t}\n\n")
+			b.WriteString("\tif err = resp.Unmarshal(&result.Answer); err != nil {\n\t\treturn\n\t}\n\n")
 		}
 	}
 	b.WriteString("\treturn\n}\n")
@@ -597,26 +647,26 @@ func (g *gen) writeCompleteMethod(b *strings.Builder, o *definitions.Operation, 
 	fmt.Fprintf(b, "\t\tpage, err = c.%s(%s)\n", o.Name, strings.Join(append([]string{"ctx"}, call...), ", "))
 	b.WriteString("\t\tresult.LatestHttpResponse = page.HttpResponse\n")
 	b.WriteString("\t\tif err != nil {\n\t\t\terr = fmt.Errorf(\"loading results: %w\", err)\n\t\t\treturn\n\t\t}\n")
-	fmt.Fprintf(b, "\t\tif page.Model == nil || len(page.Model.%s) == 0 {\n\t\t\treturn\n\t\t}\n", p.ItemsField)
-	fmt.Fprintf(b, "\t\tresult.Items = append(result.Items, page.Model.%s...)\n", p.ItemsField)
+	fmt.Fprintf(b, "\t\tif page.Answer == nil || len(page.Answer.%s) == 0 {\n\t\t\treturn\n\t\t}\n", p.ItemsField)
+	fmt.Fprintf(b, "\t\tresult.Items = append(result.Items, page.Answer.%s...)\n", p.ItemsField)
 	switch {
 	case p.ByPage && p.LimitOption == "":
 		b.WriteString("\t\t// the first page says how long a page is; a shorter one is the last, and\n")
 		b.WriteString("\t\t// so is the page that reaches the total, when the server reports one\n")
-		fmt.Fprintf(b, "\t\tif limit == 0 {\n\t\t\tlimit = len(page.Model.%s)\n\t\t}\n", p.ItemsField)
-		fmt.Fprintf(b, "\t\tif len(page.Model.%[1]s) < limit || page.Model.%[2]s > 0 && len(result.Items) >= page.Model.%[2]s {\n\t\t\treturn\n\t\t}\n", p.ItemsField, p.TotalField)
+		fmt.Fprintf(b, "\t\tif limit == 0 {\n\t\t\tlimit = len(page.Answer.%s)\n\t\t}\n", p.ItemsField)
+		fmt.Fprintf(b, "\t\tif len(page.Answer.%[1]s) < limit || page.Answer.%[2]s > 0 && len(result.Items) >= page.Answer.%[2]s {\n\t\t\treturn\n\t\t}\n", p.ItemsField, p.TotalField)
 		b.WriteString("\t\tnumber++\n")
 	case p.ByPage:
 		b.WriteString("\t\t// a short page is the last; so is the page that reaches the total, when\n")
 		b.WriteString("\t\t// the server reports one\n")
-		fmt.Fprintf(b, "\t\tif len(page.Model.%[1]s) < limit || page.Model.%[2]s > 0 && number*limit >= page.Model.%[2]s {\n\t\t\treturn\n\t\t}\n", p.ItemsField, p.TotalField)
+		fmt.Fprintf(b, "\t\tif len(page.Answer.%[1]s) < limit || page.Answer.%[2]s > 0 && number*limit >= page.Answer.%[2]s {\n\t\t\treturn\n\t\t}\n", p.ItemsField, p.TotalField)
 		// options holds a pointer to number, so the next call asks for the next page
 		b.WriteString("\t\tnumber++\n")
 	default:
-		fmt.Fprintf(b, "\t\tstart += len(page.Model.%s)\n\t\t%s.%s = &start\n", p.ItemsField, ov, p.StartIndexOption)
+		fmt.Fprintf(b, "\t\tstart += len(page.Answer.%s)\n\t\t%s.%s = &start\n", p.ItemsField, ov, p.StartIndexOption)
 		b.WriteString("\t\t// a short page is the last; so is reaching the total, when the server\n")
 		b.WriteString("\t\t// reports one (a list may report 0 whatever it holds)\n")
-		fmt.Fprintf(b, "\t\tif len(page.Model.%[1]s) < limit || page.Model.%[2]s > 0 && start >= page.Model.%[2]s {\n\t\t\treturn\n\t\t}\n", p.ItemsField, p.TotalField)
+		fmt.Fprintf(b, "\t\tif len(page.Answer.%[1]s) < limit || page.Answer.%[2]s > 0 && start >= page.Answer.%[2]s {\n\t\t\treturn\n\t\t}\n", p.ItemsField, p.TotalField)
 	}
 	b.WriteString("\t}\n}\n")
 }

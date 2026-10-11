@@ -212,7 +212,7 @@ func TestTextAnswer(t *testing.T) {
 	goTool(t, dir, "test")
 
 	method := read(t, dir, "sync_method_getname.go")
-	for _, want := range []string{"// The operation answers text (text/plain), which Model holds as it was sent.", "\tModel        *string\n", `Accept: "text/plain",`, "if err = resp.Text(result.Model); err != nil {"} {
+	for _, want := range []string{"// The operation answers text (text/plain), which Answer holds as it was sent.", "\tAnswer       *string\n", `Accept: "text/plain",`, "if err = resp.Text(result.Answer); err != nil {"} {
 		if !strings.Contains(method, want) {
 			t.Errorf("GetName has no %q:\n%s", want, method)
 		}
@@ -222,7 +222,7 @@ func TestTextAnswer(t *testing.T) {
 	}
 
 	test := read(t, dir, "sync_method_getname_test.go")
-	if !strings.Contains(test, `newOperationServer(t, 200, "application/json", "some text, as sent\n")`) || !strings.Contains(test, `*result.Model != "some text, as sent\n"`) || strings.Contains(test, "does not decode") {
+	if !strings.Contains(test, `newOperationServer(t, 200, "application/json", "some text, as sent\n")`) || !strings.Contains(test, `*result.Answer != "some text, as sent\n"`) || strings.Contains(test, "does not decode") {
 		t.Errorf("GetName's test:\n%s", test)
 	}
 }
@@ -270,7 +270,7 @@ func TestGrouped(t *testing.T) {
 
 	// a tag's package has the method, naming the types as the root's, and nothing a caller names
 	method := read(t, dir, "items/method_getitems.go")
-	for _, want := range []string{"package items", `"github.com/katbyte/pandorest/generator/testdata/mini"`, "func (c Client) GetItems(ctx context.Context, options ...mini.GetItemsOptions) (result mini.GetItemsOperationResponse, err error) {", "func (c Client) GetItemsComplete(", "var model mini.QueryResult"} {
+	for _, want := range []string{"package items", `"github.com/katbyte/pandorest/generator/testdata/mini"`, "func (c Client) GetItems(ctx context.Context, options ...mini.GetItemsOptions) (result mini.GetItemsOperationResponse, err error) {", "func (c Client) GetItemsComplete(", "var answer mini.QueryResult"} {
 		if !strings.Contains(method, want) {
 			t.Errorf("items' method file lacks %q:\n%s", want, method)
 		}
@@ -370,8 +370,8 @@ func TestGenerate(t *testing.T) {
 			"// Deprecated: the document marks this operation deprecated.",
 			"// Deprecated: the document marks this parameter deprecated.",
 			// response models: pointer for a struct, primitive or constant; value for the rest
-			"Model        *QueryResult\n", "Model        []string\n", "Model        json.RawMessage\n",
-			"Model        *string\n", "Model        *Kind\n", "Model        Union\n",
+			"Answer       *QueryResult\n", "*QueryResult\n", "Answer       []string\n", "Answer       json.RawMessage\n",
+			"Answer       *string\n", "Answer       *Kind\n", "Answer       Union\n",
 			// options on the wire
 			`out.Append("isFavorite", strconv.FormatBool(*o.IsFavorite))`,
 			`out.Append("ticks", strconv.FormatInt(*o.Ticks, 10))`,
@@ -763,7 +763,7 @@ func TestPagerWithoutLimit(t *testing.T) {
 	goTool(t, dir, "test")
 
 	src := read(t, dir, "movies_method_getpopular.go")
-	for _, want := range []string{"func (c Client) GetPopularComplete(ctx context.Context, options ...GetPopularOptions) (result GetPopularCompleteResult, err error) {", "limit := 0\n", "if limit == 0 {\n\t\t\tlimit = len(page.Model.Results)\n\t\t}", "len(result.Items) >= page.Model.TotalResults"} {
+	for _, want := range []string{"func (c Client) GetPopularComplete(ctx context.Context, options ...GetPopularOptions) (result GetPopularCompleteResult, err error) {", "limit := 0\n", "if limit == 0 {\n\t\t\tlimit = len(page.Answer.Results)\n\t\t}", "len(result.Items) >= page.Answer.TotalResults"} {
 		if !strings.Contains(src, want) {
 			t.Errorf("the pager lacks %q:\n%s", want, src)
 		}
@@ -972,7 +972,7 @@ func TestGenerateServiceOptions(t *testing.T) {
 			"func (c Client) GetSeriesBySeriesIdHistoryComplete(ctx context.Context, seriesId int, options ...GetSeriesBySeriesIdHistoryOptions) (result GetSeriesBySeriesIdHistoryCompleteResult, err error) {",
 			"// GetSeriesBySeriesIdHistoryComplete calls GetSeriesBySeriesIdHistory page by page, from the\n// page options.Page names (the first when unset), until every result is loaded.\n// options.PageSize is the page size, client.DefaultPageSize when unset.",
 			"\tnumber := 1\n\tif option.Page != nil && *option.Page > 0 {\n\t\tnumber = *option.Page\n\t}\n\toption.Page = &number\n",
-			"if len(page.Model.Records) < limit || page.Model.TotalRecords > 0 && number*limit >= page.Model.TotalRecords {",
+			"if len(page.Answer.Records) < limit || page.Answer.TotalRecords > 0 && number*limit >= page.Answer.TotalRecords {",
 			"\t\tnumber++\n",
 		},
 		"history_method_getseriesbyseriesidhistory_test.go": {

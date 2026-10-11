@@ -51,10 +51,24 @@ func Apply(all []Workaround, service string, spec *openapi.Spec, log func(string
 		if w.Service() != service {
 			continue
 		}
-		if err := w.Apply(spec); err != nil {
+		var notes []string
+		var err error
+		if noting, ok := w.(interface {
+			ApplyNoting(*openapi.Spec, func(string)) error
+		}); ok {
+			// a ready-made workaround says what it reached
+			err = noting.ApplyNoting(spec, func(n string) { notes = append(notes, n) })
+		} else {
+			err = w.Apply(spec)
+		}
+		if err != nil {
 			return nil, fmt.Errorf("%s: workaround %s no longer applies, so remove it: %w\n  (it was for: %s)", service, w.Name(), err, w.Bug())
 		}
-		log(fmt.Sprintf("%s: applied workaround %s", service, w.Name()))
+		line := fmt.Sprintf("%s: applied workaround %s", service, w.Name())
+		if len(notes) > 0 {
+			line += ": " + strings.Join(notes, ", ")
+		}
+		log(line)
 		applied = append(applied, w.Name())
 	}
 

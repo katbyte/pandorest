@@ -30,13 +30,21 @@ type About struct {
 
 type readyMade struct {
 	about About
-	apply func(spec *openapi.Spec) error
+	apply func(spec *openapi.Spec, note func(string)) error
 }
 
 func (r readyMade) Name() string                   { return r.about.Name }
 func (r readyMade) Service() string                { return r.about.Service }
 func (r readyMade) Bug() string                    { return r.about.Bug }
-func (r readyMade) Apply(spec *openapi.Spec) error { return r.apply(spec) }
+func (r readyMade) Apply(spec *openapi.Spec) error { return r.apply(spec, func(string) {}) }
+
+// ApplyNoting applies the workaround and says what it reached, a note per
+// name ("createdAt in 60 places"), which the import logs: a name that is a
+// date or an enum in fewer places than expected is seen there rather than by
+// reading generated files.
+func (r readyMade) ApplyNoting(spec *openapi.Spec, note func(string)) error {
+	return r.apply(spec, note)
+}
 
 // Answer is what an operation answers, as a ready-made workaround says it:
 // one of JSON, JSONString, Model, ListOf, Shape, File and Text.
@@ -215,7 +223,7 @@ func success(op *openapi.Operation) *openapi.Response {
 // or a file: answers says what each does, by method and path. It fails for
 // any that declares its answer now.
 func UndeclaredAnswers(about About, answers map[string]Answer) Workaround {
-	return readyMade{about, func(spec *openapi.Spec) error {
+	return readyMade{about, func(spec *openapi.Spec, _ func(string)) error {
 		if len(answers) == 0 {
 			return errors.New("it names no operations")
 		}
@@ -271,7 +279,7 @@ func ListDeclaredAsOne(schema string) Correction {
 // declares what its correction says, which is how a document that was fixed,
 // or changed again, is noticed.
 func WrongAnswers(about About, corrections map[string]Correction) Workaround {
-	return readyMade{about, func(spec *openapi.Spec) error {
+	return readyMade{about, func(spec *openapi.Spec, _ func(string)) error {
 		if len(corrections) == 0 {
 			return errors.New("it names no operations")
 		}
@@ -310,7 +318,7 @@ func WrongAnswers(about About, corrections map[string]Correction) Workaround {
 // operations that give it, by method and path. It fails for any that no
 // longer documents the declared status, or documents the other already.
 func WrongStatus(about About, declared int, answers map[int][]string) Workaround {
-	return readyMade{about, func(spec *openapi.Spec) error {
+	return readyMade{about, func(spec *openapi.Spec, _ func(string)) error {
 		from, moved := strconv.Itoa(declared), 0
 		for _, status := range slices.Sorted(maps.Keys(answers)) {
 			to := strconv.Itoa(status)
@@ -343,7 +351,7 @@ func WrongStatus(about About, declared int, answers map[int][]string) Workaround
 // one of them. A header named Accept gives the caller the say over what one
 // call asks for (see Param).
 func UndeclaredParameters(about About, targets []string, params ...Param) Workaround {
-	return readyMade{about, func(spec *openapi.Spec) error {
+	return readyMade{about, func(spec *openapi.Spec, _ func(string)) error {
 		if len(targets) == 0 || len(params) == 0 {
 			return errors.New("it names no operations or no parameters")
 		}
@@ -357,7 +365,7 @@ func UndeclaredParameters(about About, targets []string, params ...Param) Workar
 // word: properties says, by component schema, what to add. It fails for any
 // the schema declares now.
 func UndeclaredProperties(about About, properties map[string]map[string]*openapi.Schema) Workaround {
-	return readyMade{about, func(spec *openapi.Spec) error {
+	return readyMade{about, func(spec *openapi.Spec, _ func(string)) error {
 		added := 0
 		for _, name := range openapi.SortedKeys(properties) {
 			schema := spec.Components.Schemas[name]
@@ -389,7 +397,7 @@ func UndeclaredProperties(about About, properties map[string]map[string]*openapi
 // browser and nothing a client reads. They are taken out of the document. It
 // fails for any that is not there.
 func NotAPI(about About, paths ...string) Workaround {
-	return readyMade{about, func(spec *openapi.Spec) error {
+	return readyMade{about, func(spec *openapi.Spec, _ func(string)) error {
 		if len(paths) == 0 {
 			return errors.New("it names no paths")
 		}
@@ -445,7 +453,9 @@ func UndeclaredDaysExcept(about About, except map[string][]string, names ...stri
 func UndeclaredUnixDates(about About, unit string, names ...string) Workaround {
 	format, ok := map[string]string{"seconds": openapi.FormatUnixSeconds, "milliseconds": openapi.FormatUnixMillis}[unit]
 	if !ok {
-		return readyMade{about, func(*openapi.Spec) error { return fmt.Errorf("unit %q is not seconds or milliseconds", unit) }}
+		return readyMade{about, func(*openapi.Spec, func(string)) error {
+			return fmt.Errorf("unit %q is not seconds or milliseconds", unit)
+		}}
 	}
 
 	return declare(about, openapi.TypeInteger, format, nil, names)
@@ -459,7 +469,7 @@ func declareDates(about About, format string, except map[string][]string, names 
 // declare marks every property of the names that has the type given with the format, except where
 // except says not to, and fails for a name that marks nothing or an exception that excludes nothing.
 func declare(about About, typ, format string, except map[string][]string, names []string) Workaround {
-	return readyMade{about, func(spec *openapi.Spec) error {
+	return readyMade{about, func(spec *openapi.Spec, note func(string)) error {
 		if len(names) == 0 {
 			return errors.New("it names no properties")
 		}
@@ -489,6 +499,7 @@ func declare(about About, typ, format string, except map[string][]string, names 
 			case marked[name] == 0:
 				return fmt.Errorf("no %s property or parameter is called %s", typ, name)
 			}
+			note(fmt.Sprintf("%s in %s", name, placesWord(marked[name])))
 		}
 		for _, where := range openapi.SortedKeys(except) {
 			for _, name := range except[where] {
@@ -561,7 +572,7 @@ func (p place) matches(where, path string) bool {
 // parameter of the name at it. It fails for a name nothing has, for an enum
 // with no values, and for a type name a different schema already has.
 func UndeclaredEnums(about About, enums map[string]Enum) Workaround {
-	return readyMade{about, func(spec *openapi.Spec) error {
+	return readyMade{about, func(spec *openapi.Spec, note func(string)) error {
 		if len(enums) == 0 {
 			return errors.New("it names no properties")
 		}
@@ -614,8 +625,18 @@ func UndeclaredEnums(about About, enums map[string]Enum) Workaround {
 			if marked == 0 {
 				return fmt.Errorf("no plain string property or parameter is called %s", property)
 			}
+			note(fmt.Sprintf("%s as %s in %s", property, name, placesWord(marked)))
 		}
 
 		return nil
 	}}
+}
+
+// placesWord words a count of places.
+func placesWord(n int) string {
+	if n == 1 {
+		return "1 place"
+	}
+
+	return fmt.Sprintf("%d places", n)
 }
