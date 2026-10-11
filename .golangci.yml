@@ -11,6 +11,7 @@ issues:
   max-same-issues: 0
 
 linters:
+  default: none # only the linters listed below run, whatever a new golangci-lint release turns on by default
   enable:
     - asasalint                 # check for pass []any as any in variadic func(...any)
     - asciicheck                # ensure code does not contain non-ASCII identifiers
@@ -140,11 +141,21 @@ linters:
         - "unauthorized" # HTTP's own word for a 401, and part of Node's NODE_TLS_REJECT_UNAUTHORIZED
     tagalign:
       sort: true
+    nolintlint:
+      require-specific: true # a nolint that names no linter switches off every linter for the code below it
     predeclared:
       ignore: ["new", "min", "max"] # should we use newer, minimum, and maximum instead?
 
 formatters:
   enable:
+    - gci                       # enforces the import sections below (goimports alone keeps whatever groups exist)
     - gofmt                     # checks whether code was gofmt-ed
     - gofumpt                   # checks whether code was gofumpt-ed, a stricter gofmt
     - goimports                 # check import statements are formatted according to the 'goimport' command
+  settings:
+    gci:
+      sections:
+        - standard
+        - blank
+        - default
+      custom-order: true

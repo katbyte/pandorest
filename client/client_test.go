@@ -15,7 +15,6 @@ import (
 	"time"
 
 	"github.com/katbyte/go-kt/chttp"
-
 	"github.com/katbyte/pandorest/client"
 )
 
