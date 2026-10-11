@@ -254,9 +254,11 @@ type Service struct {
 	// limit the server leaves out must not read as either. A string: a
 	// server that keeps whatever a write leaves out and clears a field only
 	// when it is sent empty needs "" to go out, where a string by value is
-	// left out when empty. A boolean: held by value it is false when the
-	// server leaves it out and always sent, which is what every caller read
-	// it as; a server for which absent and false differ keeps the pointer.
+	// left out when empty. A boolean: in a model only ever answered it is
+	// held by value, false when the server leaves it out, which is what
+	// every caller read it as; in a model a request body reaches it keeps
+	// the pointer unless the model is written whole, since by value it is
+	// always sent. KeepNull keeps the pointer anywhere.
 	// Each must be a boolean, a string, or a number the document declares
 	// nullable, or the import fails naming it.
 	KeepNull []string

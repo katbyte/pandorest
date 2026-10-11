@@ -19,9 +19,11 @@ import (
 
 // gen holds what every file of one package needs.
 type gen struct {
-	svc       *definitions.Service
-	opts      Options
-	kinds     map[definitions.ObjectType]bool
+	svc   *definitions.Service
+	opts  Options
+	kinds map[definitions.ObjectType]bool
+	// sent are the models a request body reaches, whose booleans stay pointers
+	sent      map[string]bool
 	models    map[string]*definitions.Model
 	constants map[string]*definitions.Constant
 	// paged is the service's first list operation, which says how its lists
@@ -76,6 +78,7 @@ func newGen(svc *definitions.Service, opts Options) (*gen, error) {
 		}
 	}
 	g.kinds = kindsUsed(svc)
+	g.sent = sentModels(svc)
 
 	if opts.Client != "" && (opts.Credential != "" || opts.NewDoc != "") {
 		return nil, fmt.Errorf("%s: its config words the default client.go's New (Credential, NewDoc) and gives a Client of its own as well, which has its own words: drop one or the other", svc.Name)
@@ -287,31 +290,44 @@ func (g *gen) heldType(t definitions.TypeRef) string {
 }
 
 // fieldType is how a model holds a field: a struct model by pointer, a
-// boolean, number or string whose null is kept (KeepsNull, or a boolean the
-// document declares nullable) by pointer, the rest by value. A boolean by
-// value is false when the server left it out, which is what every caller
-// read it as through a helper; a server for which absent and false differ
-// names the field in KeepNull.
-func (g *gen) fieldType(f *definitions.Field) string {
-	if f.KeepsNull || (f.Type.Type == definitions.Boolean && f.Nullable) {
+// number or string whose null is kept (KeepsNull) by pointer, a boolean by
+// pointer where boolPointer says, the rest by value.
+func (g *gen) fieldType(m *definitions.Model, f *definitions.Field) string {
+	if f.KeepsNull || g.boolPointer(m, f) {
 		return "*" + g.heldType(f.Type)
 	}
 
 	return g.heldType(f.Type)
 }
 
+// boolPointer says when a boolean is held by pointer: when the document
+// declares it nullable or KeepNull names it; and in a model a request body
+// reaches, unless the model is written back whole or the field is required,
+// since a boolean by value is always sent and a server that keeps what it is
+// not sent would read a flag never set as switched off (an edit of a user's
+// email removing an administrator). A model only ever answered holds its
+// booleans by value, false when the server left them out, which is what
+// every caller read them as through a helper.
+func (g *gen) boolPointer(m *definitions.Model, f *definitions.Field) bool {
+	if f.Type.Type != definitions.Boolean {
+		return false
+	}
+
+	return f.KeepsNull || f.Nullable || (g.sent[m.Name] && !m.WrittenWhole && !f.Required)
+}
+
 // fieldTag is the JSON tag of a model's field. A boolean by value is always
 // sent, so a record written back whole carries its false flags and a server
 // that defaults a flag to true reads the false; one held by pointer
-// (nullable, or KeepNull) is omitempty, so nil leaves it unset. Lists and
+// (boolPointer) is omitempty, so nil leaves it unset. Lists and
 // maps are omitzero, so a nil one is left out but an empty one is sent,
 // which is how a body clears a list. The rest are omitempty, except the
 // strings and numbers of a model written back whole (a settings object),
 // which are always sent: read "", write "", rather than a null the server
 // does not save. A field the document requires is always sent whatever it
 // is, so an empty string goes as "" rather than not at all.
-func fieldTag(m *definitions.Model, f *definitions.Field) string {
-	if f.Required || (f.Type.Type == definitions.Boolean && !f.KeepsNull && !f.Nullable) {
+func (g *gen) fieldTag(m *definitions.Model, f *definitions.Field) string {
+	if f.Required || (f.Type.Type == definitions.Boolean && !g.boolPointer(m, f)) {
 		return f.JSONName
 	}
 	switch f.Type.Type {
@@ -717,4 +733,34 @@ func (g *gen) idsFile() string {
 	}
 
 	return g.fileHeader(b.String())
+}
+
+// sentModels is every model a request body reaches, itself or through a
+// field, a list or a map of it.
+func sentModels(svc *definitions.Service) map[string]bool {
+	models := svc.Models()
+	sent := map[string]bool{}
+	var reach func(t definitions.TypeRef)
+	reach = func(t definitions.TypeRef) {
+		switch {
+		case t.NestedItem != nil:
+			reach(*t.NestedItem)
+		case t.Type == definitions.Reference:
+			m := models[t.ReferenceName]
+			if m == nil || sent[m.Name] {
+				return
+			}
+			sent[m.Name] = true
+			for i := range m.Fields {
+				reach(m.Fields[i].Type)
+			}
+		}
+	}
+	for _, o := range svc.Operations() {
+		if o.Request != nil {
+			reach(o.Request.Type)
+		}
+	}
+
+	return sent
 }

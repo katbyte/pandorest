@@ -255,6 +255,10 @@ func (g *gen) testFile(o *definitions.Operation) string {
 			b.WriteString("\tif body != \"raw bytes\" {\n\t\tt.Errorf(\"body = %q, want the raw bytes\", body)\n\t}\n")
 		} else {
 			b.WriteString("\tif !json.Valid([]byte(body)) {\n\t\tt.Errorf(\"body = %q, want JSON\", body)\n\t}\n")
+			if g.emptyBodyIsEmpty(o) {
+				// a record with nothing set sends nothing: a flag never set must not go out as false
+				b.WriteString("\tif body != \"{}\" {\n\t\tt.Errorf(\"an empty record sent %q: a field never set went out\", body)\n\t}\n")
+			}
 		}
 	}
 	fmt.Fprintf(&b, "\tif result.HttpResponse == nil || result.HttpResponse.StatusCode != %d {\n\t\tt.Fatalf(\"HttpResponse = %%+v\", result.HttpResponse)\n\t}\n", status)
@@ -729,4 +733,24 @@ func (g *gen) sampleID(kind, name string) (expr, wire string) {
 	}
 
 	return g.typeName(kind) + "(7)", "7"
+}
+
+// emptyBodyIsEmpty reports whether an operation's request body, sent with
+// nothing set, must go out as {}: a struct model that is not written back
+// whole and requires no field, so every field is left out at its zero.
+func (g *gen) emptyBodyIsEmpty(o *definitions.Operation) bool {
+	if o.Request == nil || o.Request.Type.Type != definitions.Reference {
+		return false
+	}
+	m := g.models[o.Request.Type.ReferenceName]
+	if m == nil || m.WrittenWhole || len(m.Union) > 0 {
+		return false
+	}
+	for i := range m.Fields {
+		if m.Fields[i].Required {
+			return false
+		}
+	}
+
+	return true
 }
