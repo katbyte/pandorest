@@ -880,7 +880,9 @@ func TestUnixDates(t *testing.T) {
     "/events": {"get": {"operationId": "GetEvents", "tags": ["Events"], "parameters": [{"name": "since", "in": "query", "schema": {"type": "integer"}}],
       "responses": {"200": {"content": {"application/json": {"schema": {"$ref": "#/components/schemas/Event"}}}}}}},
     "/events/{at}": {"get": {"operationId": "GetEventAt", "tags": ["Events"], "parameters": [{"name": "at", "in": "path", "required": true, "schema": {"type": "integer"}}],
-      "responses": {"200": {"content": {"application/json": {"schema": {"$ref": "#/components/schemas/Event"}}}}}}}},
+      "responses": {"200": {"content": {"application/json": {"schema": {"$ref": "#/components/schemas/Event"}}}}}}},
+    "/events/stream": {"get": {"operationId": "GetEventStream", "tags": ["Events"],
+      "responses": {"200": {"content": {"text/event-stream": {"schema": {"type": "string", "format": "binary"}}}}}}}},
   "components": {"schemas": {"Event": {"type": "object", "properties": {"name": {"type": "string"}, "timestamp": {"type": "integer"}, "at": {"type": "integer"}, "since": {"type": "integer"}, "count": {"type": "integer"}}}}}}`))
 	if err != nil {
 		t.Fatal(err)
@@ -900,10 +902,11 @@ func TestUnixDates(t *testing.T) {
 	goTool(t, dir, "test")
 
 	for file, wants := range map[string][]string{
-		"time.go":                     {"type Unix struct{ time.Time }", "type UnixMilli struct{ time.Time }", "return json.Marshal(t.Unix())", "t.Time = time.UnixMilli(n).UTC()", "func (t Unix) String() string { return strconv.FormatInt(t.Unix(), 10) }"},
-		"events_model_event.go":       {"Timestamp Unix      `json:\"timestamp,omitzero\"`", "At        UnixMilli `json:\"at,omitzero\"`", "Count     int       `json:\"count,omitempty\"`"},
-		"events_method_getevents.go":  {"Since Unix", "if !o.Since.IsZero() {\n\t\tout.Append(\"since\", o.Since.String())"},
-		"events_method_geteventat.go": {"func (c Client) GetEventAt(ctx context.Context, at UnixMilli) (", "at.String())"},
+		"time.go":                         {"type Unix struct{ time.Time }", "type UnixMilli struct{ time.Time }", "return json.Marshal(t.Unix())", "t.Time = time.UnixMilli(n).UTC()", "func (t Unix) String() string { return strconv.FormatInt(t.Unix(), 10) }"},
+		"events_model_event.go":           {"Timestamp Unix      `json:\"timestamp,omitzero\"`", "At        UnixMilli `json:\"at,omitzero\"`", "Count     int       `json:\"count,omitempty\"`"},
+		"events_method_getevents.go":      {"Since Unix", "if !o.Since.IsZero() {\n\t\tout.Append(\"since\", o.Since.String())"},
+		"events_method_geteventat.go":     {"func (c Client) GetEventAt(ctx context.Context, at UnixMilli) (", "at.String())"},
+		"events_method_geteventstream.go": {"func (r GetEventStreamOperationResponse) Reader() (io.ReadCloser, string) {", "func (r GetEventStreamOperationResponse) ContentLength() int64 {"},
 	} {
 		src := read(t, dir, file)
 		for _, want := range wants {

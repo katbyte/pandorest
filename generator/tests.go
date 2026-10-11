@@ -623,8 +623,8 @@ func (g *gen) responseChecks(o *definitions.Operation, call testCallInfo) string
 	case o.Response == nil:
 		return ""
 	case o.Response.Type.Type == definitions.RawFile && o.Response.ContentType == eventStream:
-		return "\tbody, contentType := result.Reader()\n\tif contentType == \"\" || result.ContentLength() == 0 {\n\t\tt.Errorf(\"Reader = %q, length %d\", contentType, result.ContentLength())\n\t}\n" +
-			"\tstreamed, _ := io.ReadAll(body)\n\t_ = body.Close()\n\tif string(streamed) != \"file bytes\" {\n\t\tt.Errorf(\"streamed body = %q\", streamed)\n\t}\n"
+		return "\tstream, contentType := result.Reader()\n\tif contentType == \"\" || result.ContentLength() == 0 {\n\t\tt.Errorf(\"Reader = %q, length %d\", contentType, result.ContentLength())\n\t}\n" +
+			"\tstreamed, _ := io.ReadAll(stream)\n\t_ = stream.Close()\n\tif string(streamed) != \"file bytes\" {\n\t\tt.Errorf(\"streamed body = %q\", streamed)\n\t}\n"
 	case o.Response.Type.Type == definitions.RawFile:
 		return "\tif _, contentType := result.Reader(); contentType == \"\" || result.ContentLength() != 10 || result.Filename() != \"answer.bin\" {\n\t\tt.Errorf(\"Reader = %q, length %d, filename %q\", contentType, result.ContentLength(), result.Filename())\n\t}\n" +
 			"\tif data, err := result.Bytes(9); err == nil || string(data) != \"\" {\n\t\tt.Errorf(\"Bytes over the size = %q, %v\", data, err)\n\t}\n" +
