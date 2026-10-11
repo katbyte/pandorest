@@ -76,7 +76,7 @@ const miniSpec = `{
     "Union": {"type": "object", "oneOf": [{"$ref": "#/components/schemas/Item"}]},
     "Linux": {"type": "object"},
     "Item": {"type": "object", "properties": {
-      "Id": {"type": "string"}, "IsFolder": {"type": "boolean"}, "Parent": {"$ref": "#/components/schemas/Item"},
+      "Id": {"type": "string"}, "IsFolder": {"type": "boolean", "nullable": true}, "Parent": {"$ref": "#/components/schemas/Item"},
       "Kind": {"$ref": "#/components/schemas/Kind"}, "Children": {"type": "array", "items": {"$ref": "#/components/schemas/Item"}},
       "Blur": {"type": "object", "properties": {"Primary": {"type": "object", "additionalProperties": {"type": "string"}}}},
       "Rating": {"type": "number", "format": "float"}, "Season": {"type": "integer", "nullable": true}, "Episode": {"type": "integer", "nullable": true}}},
@@ -294,8 +294,8 @@ func TestGrouped(t *testing.T) {
 	}
 
 	// under a directory not named for the package (a version's), the types package is a directory of its own
-	versioned := generateInModule(t, svc, generator.Options{Grouped: true, ImportPath: "github.com/katbyte/pandorest/generator/testdata/mini", ClientService: "service", Packages: map[string]string{"Image": "images", "Sync": "syncs"}, Dir: filepath.Join("testdata", "1.0")})
-	for _, want := range []string{"mini/doc.go", "mini/model_item.go", "mini/client.go", "items/method_getitems.go", "client/client.go"} {
+	versioned := generateInModule(t, svc, generator.Options{Grouped: true, ImportPath: "github.com/katbyte/pandorest/generator/testdata/mini", ClientService: "service", Packages: map[string]string{"Image": "images", "Sync": "syncs"}, Dir: filepath.Join("testdata", "1.0"), ClientPackage: "miniclient"})
+	for _, want := range []string{"mini/doc.go", "mini/model_item.go", "mini/client.go", "items/method_getitems.go", "miniclient/client.go"} {
 		if _, err := os.Stat(filepath.Join(versioned, filepath.FromSlash(want))); err != nil {
 			t.Errorf("versioned: no %s", want)
 		}
@@ -1050,9 +1050,9 @@ func TestGenerateServiceOptions(t *testing.T) {
 	// a required field is always sent, and so are a settings object's strings
 	// and numbers; its flags, its lists and a number whose null is kept are not
 	for file, tags := range map[string][]string{
-		"common_model_record.go": {"`json:\"id,omitempty\"`", "`json:\"title\"`", `Monitored +\*bool +` + "`json:\"monitored\"`"},
+		"common_model_record.go": {"`json:\"id,omitempty\"`", "`json:\"title\"`", `Monitored +bool +` + "`json:\"monitored\"`"},
 		// a string whose null is kept is a pointer left out when nil, even in a model written whole
-		"hostconfig_model_hostconfig.go": {`BindAddress +\*string +` + "`json:\"bindAddress,omitempty\"`", "`json:\"port\"`", `SslPort +\*int +` + "`json:\"sslPort,omitempty\"`", "`json:\"enableSsl,omitempty\"`", "`json:\"tags,omitzero\"`"},
+		"hostconfig_model_hostconfig.go": {`BindAddress +\*string +` + "`json:\"bindAddress,omitempty\"`", "`json:\"port\"`", `SslPort +\*int +` + "`json:\"sslPort,omitempty\"`", "`json:\"enableSsl\"`", "`json:\"tags,omitzero\"`"},
 	} {
 		src := read(t, dir, file)
 		for _, tag := range tags {

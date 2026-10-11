@@ -287,30 +287,31 @@ func (g *gen) heldType(t definitions.TypeRef) string {
 }
 
 // fieldType is how a model holds a field: a struct model by pointer, a
-// boolean as *bool, a number or string whose null is kept (KeepsNull) by
-// pointer, the rest by value.
+// boolean, number or string whose null is kept (KeepsNull, or a boolean the
+// document declares nullable) by pointer, the rest by value. A boolean by
+// value is false when the server left it out, which is what every caller
+// read it as through a helper; a server for which absent and false differ
+// names the field in KeepNull.
 func (g *gen) fieldType(f *definitions.Field) string {
-	if f.Type.Type == definitions.Boolean {
-		return "*bool"
-	}
-	if f.KeepsNull {
+	if f.KeepsNull || (f.Type.Type == definitions.Boolean && f.Nullable) {
 		return "*" + g.heldType(f.Type)
 	}
 
 	return g.heldType(f.Type)
 }
 
-// fieldTag is the JSON tag of a model's field. Booleans are *bool with omitempty:
-// the servers default many flags to true, so a body must be able to leave one
-// unset as well as send an explicit false. Lists and maps are omitzero, so a
-// nil one is left out but an empty one is sent, which is how a body clears a
-// list. The rest are omitempty, except the strings and numbers of a model
-// written back whole (a settings object), which are always sent: read "",
-// write "", rather than a null the server does not save. A field the
-// document requires is always sent whatever it is, so an empty string goes
-// as "" rather than not at all.
+// fieldTag is the JSON tag of a model's field. A boolean by value is always
+// sent, so a record written back whole carries its false flags and a server
+// that defaults a flag to true reads the false; one held by pointer
+// (nullable, or KeepNull) is omitempty, so nil leaves it unset. Lists and
+// maps are omitzero, so a nil one is left out but an empty one is sent,
+// which is how a body clears a list. The rest are omitempty, except the
+// strings and numbers of a model written back whole (a settings object),
+// which are always sent: read "", write "", rather than a null the server
+// does not save. A field the document requires is always sent whatever it
+// is, so an empty string goes as "" rather than not at all.
 func fieldTag(m *definitions.Model, f *definitions.Field) string {
-	if f.Required {
+	if f.Required || (f.Type.Type == definitions.Boolean && !f.KeepsNull && !f.Nullable) {
 		return f.JSONName
 	}
 	switch f.Type.Type {

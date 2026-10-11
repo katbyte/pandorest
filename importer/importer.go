@@ -140,8 +140,8 @@ func (im *importer) keepNull() {
 		switch {
 		case field == nil:
 			im.fail(fmt.Sprintf("the config's KeepNull names %s, a field the document does not have: change or remove the entry", name))
-		case !field.Type.Numeric() && field.Type.Type != definitions.String:
-			im.fail(fmt.Sprintf("the config's KeepNull names %s, which is %s, not a string or a number: change or remove the entry", name, field.Type))
+		case !field.Type.Numeric() && field.Type.Type != definitions.String && field.Type.Type != definitions.Boolean:
+			im.fail(fmt.Sprintf("the config's KeepNull names %s, which is %s, not a boolean, a string or a number: change or remove the entry", name, field.Type))
 		case field.Type.Numeric() && !field.Nullable:
 			im.fail(fmt.Sprintf("the config's KeepNull names %s, which the document no longer declares nullable: remove the entry", name))
 		default:

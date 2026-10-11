@@ -91,6 +91,10 @@ type Options struct {
 	ImportPath string
 	Packages   map[string]string
 
+	// ClientPackage names the grouped layout's client package; empty is
+	// client.
+	ClientPackage string
+
 	// InlineSingleOptions has an operation with one option take it as an
 	// argument in place of the struct (see config.Service).
 	InlineSingleOptions bool

@@ -727,11 +727,11 @@ func TestKeepNull(t *testing.T) {
 	}
 
 	for keep, want := range map[string]string{
-		"Item.Ghost":    "KeepNull names Item.Ghost, a field the document does not have",
-		"Ghost.Id":      "KeepNull names Ghost.Id, a field the document does not have",
-		"ItemSeason":    "KeepNull names ItemSeason, a field the document does not have",
-		"Item.IsFolder": "KeepNull names Item.IsFolder, which is Boolean, not a string or a number",
-		"Item.Rating":   "KeepNull names Item.Rating, which the document no longer declares nullable",
+		"Item.Ghost":  "KeepNull names Item.Ghost, a field the document does not have",
+		"Ghost.Id":    "KeepNull names Ghost.Id, a field the document does not have",
+		"ItemSeason":  "KeepNull names ItemSeason, a field the document does not have",
+		"Item.Parent": "KeepNull names Item.Parent, which is Reference(Item), not a boolean, a string or a number",
+		"Item.Rating": "KeepNull names Item.Rating, which the document no longer declares nullable",
 	} {
 		if _, err := importKeeping(t, keep); err == nil || !strings.Contains(err.Error(), want) {
 			t.Errorf("KeepNull %s: err = %v, want containing %q", keep, err, want)

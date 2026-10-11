@@ -207,6 +207,11 @@ type Service struct {
 	Grouped  bool
 	Packages map[string]string
 	Module   string
+	// ClientPackage names the grouped layout's client package, the one
+	// with New and the Client with a field per tag: client when empty. A
+	// repository whose files import pandorest's own client beside it may
+	// name it to spare the alias (embyclient); most need not.
+	ClientPackage string
 	// Notes is a paragraph added to the generated package's documentation,
 	// for what is true of the service's every operation and no document
 	// says: how it writes its dates, say.
@@ -249,8 +254,11 @@ type Service struct {
 	// limit the server leaves out must not read as either. A string: a
 	// server that keeps whatever a write leaves out and clears a field only
 	// when it is sent empty needs "" to go out, where a string by value is
-	// left out when empty. Each must be a string, or a number the document
-	// declares nullable, or the import fails naming it.
+	// left out when empty. A boolean: held by value it is false when the
+	// server leaves it out and always sent, which is what every caller read
+	// it as; a server for which absent and false differ keeps the pointer.
+	// Each must be a boolean, a string, or a number the document declares
+	// nullable, or the import fails naming it.
 	KeepNull []string
 	// Dates and Days say how the server writes a date-time and a date,
 	// which the document declares but never spells out. Set, every such
