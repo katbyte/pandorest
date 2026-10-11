@@ -81,7 +81,7 @@ go run ./sdk/pandorest resolve     # which document and definitions each service
 
 `-service a,b` limits a command to some services, `-root` runs it against another checkout, and `diff -old <dir> -new <dir>` compares two definitions directories. `pandorest.Run` is the same thing as a function, for a test that wants to hold the repository to its own documents.
 
-**Documents are named by version.** `<dir>/<service>-openapi-<version>.json` imports into `<dir>/<service>-<version>/` beside it, and the highest version present is the one imported and generated from. The version is the release the document was taken from: for Emby and Jellyfin that is the document's own `info.version`, and for Sonarr, Radarr and Prowlarr, whose documents say `3.0.0` or `1.0.0` whatever the release, it is not, so name the file by the release. Nothing compares the two. The generated package declares both: `APIVersion` is the document's own and `DocumentVersion` the file's.
+**Documents are named by version.** `<dir>/<service>-openapi-<version>.json` imports into `<dir>/<service>-<version>/` beside it, and the highest version present is the one imported and generated from, unless the service says where every version's package goes (`Outputs`): then each is imported and generated, into a package of its own that nothing ties to the others, so a caller can be on one version and import the next beside it for what it needs, the way azurerm imports two API versions of one Azure service. `-version` runs a command on one of them. The version is the release the document was taken from: for Emby and Jellyfin that is the document's own `info.version`, and for Sonarr, Radarr and Prowlarr, whose documents say `3.0.0` or `1.0.0` whatever the release, it is not, so name the file by the release. Nothing compares the two. The generated package declares both: `APIVersion` is the document's own and `DocumentVersion` the file's.
 
 A repository that vendors its dependencies takes a new pandorest in this order: `go get` it, regenerate with `-mod=mod` (`go run -mod=mod ./sdk/pandorest generate`), then `go mod tidy` and `go mod vendor`. The other way round, the stale `vendor/` and the generated files' old imports each stop the other from building.
 
@@ -94,7 +94,8 @@ Everything about a service is in its `config.Service`, and everything but the fi
 | Field | Says |
 |---|---|
 | `Name` | the `-service` name, and the prefix of the document and definitions names |
-| `Package`, `Output` | the generated package's name and directory |
+| `Package`, `Output` | the generated package's name and directory, for a service generated from its highest version alone |
+| `Outputs` | for a service generated from every version it vendors: each document's version to its package directory (`"4.10.0.40": "sdk/emby/v1"`); every version listed must be vendored and every document listed, and `Output` is then unused |
 | `Auth` | the name of the base client's authorizer: the generated `New(baseURL, token)` calls `client.<Auth>(token)`, which is `APIKey` or `Bearer` on pandorest's own |
 | `ClientService` | the name of a `client.Service` written by hand in the generated package, which the generated `New` makes its client from |
 | `ClientImport` | the import path of a base client of the repository's own, in place of pandorest's |

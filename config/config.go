@@ -8,6 +8,7 @@ package config
 import (
 	"cmp"
 	"fmt"
+	"maps"
 	"path/filepath"
 	"slices"
 	"strconv"
@@ -62,14 +63,24 @@ type Paging struct {
 // <dir>/<name>-<version>/ beside it, and Resolve picks the highest version
 // present, which is the one the SDK is generated from. An older document can
 // stay beside it for the diff, and a newer one is picked up by being added.
+// A service that wants an SDK of every version it vendors, each a package of
+// its own that nothing ties to the others, says where each goes in Outputs.
 type Service struct {
 	// Name is the -service flag and the prefix of the document and
 	// definitions names.
 	Name string
 	// Package is the Go package name of the generated SDK.
 	Package string
-	// Output is the generated package directory.
+	// Output is the generated package directory, for a service generated
+	// from its highest version alone.
 	Output string
+	// Outputs, for a service generated from every version it vendors, is
+	// where each goes: the document's version to its package directory
+	// ("4.10.0.40": "sdk/emby/v1"). Every version listed must be vendored
+	// and every document vendored must be listed, or the import fails
+	// naming it; Output is then not used. The packages are independent of
+	// one another, so a caller can import two side by side.
+	Outputs map[string]string
 	// Dir is the directory the documents and definitions are in; empty is
 	// DefaultDir.
 	Dir string
@@ -233,7 +244,8 @@ func (s Service) In(root string) Service {
 func (s Service) Path(p string) string { return filepath.Join(s.Root, p) }
 
 // Resolve finds the service's documents under its directory and settles on
-// the highest version: Spec is that document and Definitions its definitions
+// the highest version, taking its package directory from Outputs when the
+// service has them: Spec is that document and Definitions its definitions
 // directory. A service with no document is an error.
 func (s Service) Resolve() (Service, error) {
 	versions, err := s.Versions()
@@ -243,11 +255,73 @@ func (s Service) Resolve() (Service, error) {
 	if len(versions) == 0 {
 		return s, fmt.Errorf("%s: no document %s under %q", s.Name, filepath.ToSlash(s.SpecPath("<version>")), cmp.Or(s.Root, "."))
 	}
-	s.Version = versions[len(versions)-1]
-	s.Spec = s.SpecPath(s.Version)
-	s.Definitions = s.DefinitionsPath(s.Version)
+	if err := s.checkVersions(versions); err != nil {
+		return s, err
+	}
 
-	return s, nil
+	return s.at(versions[len(versions)-1]), nil
+}
+
+// ResolveAll resolves the service once per version it generates: every
+// version it vendors for one with Outputs, and the highest alone otherwise.
+func (s Service) ResolveAll() ([]Service, error) {
+	if len(s.Outputs) == 0 {
+		resolved, err := s.Resolve()
+		if err != nil {
+			return nil, err
+		}
+
+		return []Service{resolved}, nil
+	}
+
+	versions, err := s.Versions()
+	if err != nil {
+		return nil, err
+	}
+	if err := s.checkVersions(versions); err != nil {
+		return nil, err
+	}
+	all := make([]Service, 0, len(versions))
+	for _, version := range versions {
+		all = append(all, s.at(version))
+	}
+
+	return all, nil
+}
+
+// at is the service resolved to one of its versions.
+func (s Service) at(version string) Service {
+	s.Version = version
+	s.Spec = s.SpecPath(version)
+	s.Definitions = s.DefinitionsPath(version)
+	if dir, ok := s.Outputs[version]; ok {
+		s.Output = dir
+	}
+
+	return s
+}
+
+// checkVersions holds a service's Outputs to its vendored documents: each
+// names the other, and Output is not set beside them.
+func (s Service) checkVersions(vendored []string) error {
+	if len(s.Outputs) == 0 {
+		return nil
+	}
+	if s.Output != "" {
+		return fmt.Errorf("%s: Output and Outputs are both set: a service generated per version says where each goes in Outputs alone", s.Name)
+	}
+	for _, version := range slices.Sorted(maps.Keys(s.Outputs)) {
+		if !slices.Contains(vendored, version) {
+			return fmt.Errorf("%s: Outputs names %s, and no document %s is vendored", s.Name, version, filepath.ToSlash(s.SpecPath(version)))
+		}
+	}
+	for _, version := range vendored {
+		if _, ok := s.Outputs[version]; !ok {
+			return fmt.Errorf("%s: %s is vendored and Outputs does not say where its package goes", s.Name, filepath.ToSlash(s.SpecPath(version)))
+		}
+	}
+
+	return nil
 }
 
 // Versions lists the versions of the service's vendored documents, lowest

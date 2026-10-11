@@ -228,6 +228,48 @@ func TestImportGenerateCheck(t *testing.T) {
 	}
 }
 
+// A service with Outputs gets an SDK for every version it vendors, each a
+// package of its own, and -version picks one of them.
+func TestEveryVersion(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	writeFile(t, filepath.Join(root, "api-defs", "multi-openapi-1.9.json"), miniDocument)
+	writeFile(t, filepath.Join(root, "api-defs", "multi-openapi-2.0.json"), strings.Replace(miniDocument, `"version": "1.9"`, `"version": "2.0"`, 1))
+	cfg := pandorest.Config{Services: []config.Service{{
+		Name: "multi", Package: "multi", Naming: config.OperationIDNaming, Auth: "APIKey", ClientService: "service",
+		Outputs: map[string]string{"1.9": "sdk/multi/v1", "2.0": "sdk/multi/v2"},
+	}}}
+	run := func(args ...string) (string, error) {
+		var out, log bytes.Buffer
+		err := pandorest.Run(cfg, append(args, "-root", root, "-quiet"), &out, &log)
+
+		return out.String(), err
+	}
+
+	stdout, err := run("resolve")
+	if want := "multi\t1.9\t" + filepath.Join("api-defs", "multi-openapi-1.9.json") + "\t" + filepath.Join("api-defs", "multi-1.9") + "\nmulti\t2.0\t" + filepath.Join("api-defs", "multi-openapi-2.0.json") + "\t" + filepath.Join("api-defs", "multi-2.0") + "\n"; err != nil || stdout != want {
+		t.Errorf("resolve = %v:\n%s", err, stdout)
+	}
+	for _, cmd := range []string{"import", "generate", "check"} {
+		if stdout, err := run(cmd); err != nil || strings.Count(stdout, "multi: ") != 2 {
+			t.Fatalf("%s = %v:\n%s", cmd, err, stdout)
+		}
+	}
+	v1, v2 := listFiles(t, filepath.Join(root, "sdk", "multi", "v1")), listFiles(t, filepath.Join(root, "sdk", "multi", "v2"))
+	if !strings.Contains(v1["client.go"], `const APIVersion = "1.9"`) || !strings.Contains(v2["client.go"], `const APIVersion = "2.0"`) || !strings.Contains(v2["doc.go"], "api-defs/multi-2.0") {
+		t.Errorf("each package is not its own version:\n%s\n%s", v1["client.go"], v2["client.go"])
+	}
+
+	// one version at a time
+	if stdout, err := run("generate", "-version", "2.0"); err != nil || strings.Count(stdout, "multi: ") != 1 || !strings.Contains(stdout, filepath.Join("sdk", "multi", "v2")) {
+		t.Errorf("generate -version 2.0 = %v:\n%s", err, stdout)
+	}
+	if _, err := run("generate", "-version", "3.0"); err == nil || !strings.Contains(err.Error(), "multi: no version 3.0 is vendored") {
+		t.Errorf("generate -version 3.0 = %v", err)
+	}
+}
+
 // A refreshed document is vendored beside the old one and takes over by being
 // the higher version; the diff says what it changes, and the definitions are
 // stale until it is imported.

@@ -96,6 +96,60 @@ func TestCompareVersions(t *testing.T) {
 	}
 }
 
+// A service with Outputs is resolved once per vendored version, each to the
+// package directory Outputs names, and Outputs and the documents must name
+// each other.
+func TestOutputs(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, "api-defs"), 0o750); err != nil {
+		t.Fatal(err)
+	}
+	svc := Service{Name: "emby", Package: "emby", Outputs: map[string]string{"4.10.0.40": "sdk/emby/v1", "4.11.0.5": "sdk/emby/v2"}}.In(root)
+	for _, v := range []string{"4.10.0.40", "4.11.0.5"} {
+		if err := os.WriteFile(filepath.Join(root, svc.SpecPath(v)), []byte("{}"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	all, err := svc.ResolveAll()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(all) != 2 || all[0].Version != "4.10.0.40" || all[0].Output != "sdk/emby/v1" || all[0].Definitions != filepath.Join("api-defs", "emby-4.10.0.40") || all[1].Version != "4.11.0.5" || all[1].Output != "sdk/emby/v2" {
+		t.Errorf("ResolveAll = %+v", all)
+	}
+	if one, err := svc.Resolve(); err != nil || one.Version != "4.11.0.5" || one.Output != "sdk/emby/v2" {
+		t.Errorf("Resolve = %+v, %v, want the highest with its own package", one, err)
+	}
+
+	// a service without Outputs resolves to its highest version alone
+	if all, err := (Service{Name: "emby", Output: "sdk/emby"}).In(root).ResolveAll(); err != nil || len(all) != 1 || all[0].Version != "4.11.0.5" || all[0].Output != "sdk/emby" {
+		t.Errorf("ResolveAll without Outputs = %+v, %v", all, err)
+	}
+
+	for name, tc := range map[string]struct {
+		svc  Service
+		want string
+	}{
+		"Output beside Outputs":  {Service{Name: "emby", Output: "sdk/emby", Outputs: map[string]string{"4.10.0.40": "a", "4.11.0.5": "b"}}, "emby: Output and Outputs are both set"},
+		"a version not vendored": {Service{Name: "emby", Outputs: map[string]string{"4.10.0.40": "a", "4.11.0.5": "b", "4.12.0.1": "c"}}, "emby: Outputs names 4.12.0.1, and no document api-defs/emby-openapi-4.12.0.1.json is vendored"},
+		"a document not placed":  {Service{Name: "emby", Outputs: map[string]string{"4.11.0.5": "b"}}, "emby: api-defs/emby-openapi-4.10.0.40.json is vendored and Outputs does not say where its package goes"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			if _, err := tc.svc.In(root).ResolveAll(); err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Errorf("ResolveAll = %v, want containing %q", err, tc.want)
+			}
+			if _, err := tc.svc.In(root).Resolve(); err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Errorf("Resolve = %v, want containing %q", err, tc.want)
+			}
+		})
+	}
+}
+
 // A service whose Dir is set keeps its documents and definitions there
 // rather than under DefaultDir.
 func TestResolveInItsOwnDirectory(t *testing.T) {

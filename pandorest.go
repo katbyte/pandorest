@@ -40,6 +40,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"slices"
 	"strings"
 
 	"github.com/katbyte/pandorest/config"
@@ -64,11 +65,13 @@ var ErrChanges = errors.New("the definitions differ")
 
 const usage = `usage: pandorest <import|generate|diff|check|resolve> [flags]
 
-  import    read each service's highest-versioned spec into its definitions directory, applying the workarounds
+  import    read each service's spec into its definitions directory, applying the workarounds
   generate  write the SDK packages from those definitions
   diff      report what the specs change against the checked-in definitions
   check     verify the definitions match the specs and the packages have every method
-  resolve   print each service's version, document and definitions (the highest version present)
+  resolve   print each service's version, document and definitions
+
+a service is its highest version alone, or every version it vendors when its config says where each goes (Outputs)
 
 run "pandorest <command> -h" for a command's flags`
 
@@ -102,6 +105,7 @@ func Run(cfg Config, args []string, stdout, stderr io.Writer) error {
 	fs.SetOutput(stderr)
 	services := fs.String("service", "", "comma-separated services to process (default all: "+strings.Join(config.Names(cfg.Services), ", ")+")")
 	root := fs.String("root", ".", "repository root the config paths are relative to")
+	version := fs.String("version", "", "one version of a service generated per version (default all of them)")
 	quiet := fs.Bool("quiet", false, "do not log each workaround and warning")
 	var oldDir, newDir *string
 	var exitCode *bool
@@ -136,29 +140,21 @@ func Run(cfg Config, args []string, stdout, stderr io.Writer) error {
 		return err
 	}
 	changed := false
-	for _, svc := range selected {
-		svc, err = svc.In(*root).Resolve()
+	for _, selected := range selected {
+		versions, err := selected.In(*root).ResolveAll()
 		if err != nil {
 			return err
 		}
-		switch cmd {
-		case cmdImport:
-			err = importService(svc, cfg.Workarounds, log, stdout)
-		case cmdGenerate:
-			err = generateService(svc, stdout)
-		case cmdDiff:
-			var differs bool
-			differs, err = diffService(svc, cfg.Workarounds, log, stdout)
-			changed = changed || differs
-		case cmdCheck:
-			err = checkService(svc, cfg.Workarounds, log, stdout)
-		case cmdResolve:
-			_, _ = fmt.Fprintf(stdout, "%s\t%s\t%s\t%s\n", svc.Name, svc.Version, svc.Spec, svc.Definitions)
-		default:
-			return fmt.Errorf("unknown command %q\n%s", cmd, usage)
+		if *version != "" {
+			versions = slices.DeleteFunc(versions, func(s config.Service) bool { return s.Version != *version })
+			if len(versions) == 0 {
+				return fmt.Errorf("%s: no version %s is vendored", selected.Name, *version)
+			}
 		}
-		if err != nil {
-			return err
+		for _, svc := range versions {
+			if err := runOne(cmd, svc, cfg, log, stdout, &changed); err != nil {
+				return err
+			}
 		}
 	}
 	if cmd == cmdDiff && changed && *exitCode {
@@ -166,6 +162,29 @@ func Run(cfg Config, args []string, stdout, stderr io.Writer) error {
 	}
 
 	return nil
+}
+
+// runOne runs one command on one service, resolved to one version.
+func runOne(cmd string, svc config.Service, cfg Config, log func(string), stdout io.Writer, changed *bool) error {
+	var err error
+	switch cmd {
+	case cmdImport:
+		err = importService(svc, cfg.Workarounds, log, stdout)
+	case cmdGenerate:
+		err = generateService(svc, stdout)
+	case cmdDiff:
+		var differs bool
+		differs, err = diffService(svc, cfg.Workarounds, log, stdout)
+		*changed = *changed || differs
+	case cmdCheck:
+		err = checkService(svc, cfg.Workarounds, log, stdout)
+	case cmdResolve:
+		_, _ = fmt.Fprintf(stdout, "%s\t%s\t%s\t%s\n", svc.Name, svc.Version, svc.Spec, svc.Definitions)
+	default:
+		return fmt.Errorf("unknown command %q\n%s", cmd, usage)
+	}
+
+	return err
 }
 
 func importService(svc config.Service, all []workarounds.Workaround, log func(string), stdout io.Writer) error {

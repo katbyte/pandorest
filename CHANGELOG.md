@@ -1,3 +1,7 @@
+## Unreleased
+
+- a service can generate an SDK for every version of its document it vendors, each a package of its own: `Outputs` maps a document's version to its package directory (`"4.10.0.40": "sdk/emby/v1"`), and `import`, `generate`, `check` and `diff` run per version, with `-version` to pick one. The packages are independent, so a caller can import two side by side. A service without `Outputs` is generated from its highest version alone, as before
+
 ## v0.6.1 (2026-10-10)
 
 - `KeepNull` takes a string field as well as a nullable number: the field is held as a `*string`, left out when nil and sent as `""` when it points at one, for a server that keeps whatever a write leaves out and clears a field only when it is sent empty (Dockhand's `publicIp`). A string held by value is left out when empty, so such a field could not be cleared
