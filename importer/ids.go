@@ -65,6 +65,9 @@ func (im *importer) applyIDs(groups map[string]*definitions.Group) []definitions
 		kinds = append(kinds, &idKind{cfg: c, base: base})
 	}
 	for _, p := range im.cfg.Plain {
+		if strings.Contains(p, " ") {
+			continue // a place, which may leave one spot of a typed name alone
+		}
 		for _, c := range im.cfg.IDs {
 			if slices.ContainsFunc(c.Names, func(n string) bool { return strings.EqualFold(n, p) }) {
 				im.fail(fmt.Sprintf("%s is both a name of %s and in Plain", p, c.Name))
@@ -72,6 +75,12 @@ func (im *importer) applyIDs(groups map[string]*definitions.Group) []definitions
 		}
 	}
 
+	var plainPlaces []string
+	for _, entry := range im.cfg.Plain {
+		if strings.Contains(entry, " ") {
+			plainPlaces = append(plainPlaces, entry)
+		}
+	}
 	places := places(groups)
 	typed := map[*definitions.TypeRef]string{}
 	inUsed, exceptUsed := map[string]bool{}, map[string]bool{}
@@ -80,7 +89,7 @@ func (im *importer) applyIDs(groups map[string]*definitions.Group) []definitions
 		var claimed []*idKind
 		var sources []string
 		for _, k := range kinds {
-			source, ok := claims(k, p, groups, inUsed, exceptUsed)
+			source, ok := claims(k, p, groups, inUsed, exceptUsed, plainPlaces)
 			if ok {
 				claimed = append(claimed, k)
 				sources = append(sources, source)
@@ -119,7 +128,10 @@ func (im *importer) applyIDs(groups map[string]*definitions.Group) []definitions
 			continue
 		}
 		for _, entry := range k.cfg.In {
-			if !inUsed[k.cfg.Name+" "+entry] {
+			switch {
+			case inUsed["stale "+k.cfg.Name+" "+entry]:
+				im.fail(fmt.Sprintf("%s: In %q is not needed, Of or Names type it, so remove it", k.cfg.Name, entry))
+			case !inUsed[k.cfg.Name+" "+entry]:
 				im.fail(fmt.Sprintf("%s: In %q matches no plain id", k.cfg.Name, entry))
 			}
 		}
@@ -220,7 +232,7 @@ func places(groups map[string]*definitions.Group) []place {
 
 // claims reports whether a kind claims a place, and by what: "In", "name"
 // or "Of".
-func claims(k *idKind, p *place, groups map[string]*definitions.Group, inUsed, exceptUsed map[string]bool) (string, bool) {
+func claims(k *idKind, p *place, groups map[string]*definitions.Group, inUsed, exceptUsed map[string]bool, plainPlaces []string) (string, bool) {
 	for _, entry := range k.cfg.Except {
 		if openapi.PlaceOf(entry).Matches(p.where, p.name) {
 			exceptUsed[k.cfg.Name+" "+entry] = true
@@ -228,26 +240,36 @@ func claims(k *idKind, p *place, groups map[string]*definitions.Group, inUsed, e
 			return "Except", false
 		}
 	}
+	for _, entry := range plainPlaces {
+		if openapi.PlaceOf(entry).Matches(p.where, p.name) {
+			return "Except", false
+		}
+	}
+	inferred := ""
+	switch {
+	case slices.ContainsFunc(k.cfg.Names, func(n string) bool { return strings.EqualFold(n, p.name) }) || slices.ContainsFunc(k.cfg.Joined, func(n string) bool { return strings.EqualFold(n, p.name) }):
+		inferred = "name"
+	case strings.EqualFold(p.name, "id") && p.model != "" && slices.ContainsFunc(k.cfg.Of, func(n string) bool { return typeName(n) == p.model }):
+		inferred = "Of"
+	case strings.EqualFold(p.name, "id") && p.path && pathIsOf(k, p.where, groups):
+		inferred = "Of"
+	}
 	for _, entry := range k.cfg.In {
 		if openapi.PlaceOf(entry).Matches(p.where, p.name) {
+			if inferred != "" {
+				// stale: the inference types it the same, so the entry would sit unneeded in every list
+				inUsed[k.cfg.Name+" "+entry] = false
+				inUsed["stale "+k.cfg.Name+" "+entry] = true
+
+				return inferred, true
+			}
 			inUsed[k.cfg.Name+" "+entry] = true
 
 			return "In", true
 		}
 	}
-	if slices.ContainsFunc(k.cfg.Names, func(n string) bool { return strings.EqualFold(n, p.name) }) || slices.ContainsFunc(k.cfg.Joined, func(n string) bool { return strings.EqualFold(n, p.name) }) {
-		return "name", true
-	}
-	if strings.EqualFold(p.name, "id") {
-		if p.model != "" && slices.ContainsFunc(k.cfg.Of, func(n string) bool { return typeName(n) == p.model }) {
-			return "Of", true
-		}
-		if p.path && pathIsOf(k, p.where, groups) {
-			return "Of", true
-		}
-	}
 
-	return "", false
+	return inferred, inferred != ""
 }
 
 // pathIsOf reports whether the path of the operation at where is one of the
@@ -302,7 +324,11 @@ func (im *importer) typeAsID(k *idKind, p *place, source string) bool {
 	case baseFits(k.base, p.typ.Type, p.path):
 		*p.typ = id
 	default:
-		im.fail(fmt.Sprintf("%s %s is a %s, which cannot be a %s (%s)", p.where, p.name, p.typ.Type, k.cfg.Name, k.base))
+		hint := ""
+		if p.option != nil && p.typ.Type == definitions.String {
+			hint = "; a string that carries several joined by commas is named in Joined"
+		}
+		im.fail(fmt.Sprintf("%s %s is a %s, which cannot be a %s (%s)%s", p.where, p.name, p.typ.Type, k.cfg.Name, k.base, hint))
 
 		return false
 	}
@@ -328,13 +354,35 @@ func baseFits(base, typ definitions.ObjectType, path bool) bool {
 	}
 }
 
+// plain reports whether Plain leaves a place alone: by its name, wherever
+// it sits, or by a place as In takes it ("SeasonPassSeriesResource .id").
+func (im *importer) plain(p *place) bool {
+	for _, entry := range im.cfg.Plain {
+		if strings.Contains(entry, " ") {
+			if openapi.PlaceOf(entry).Matches(p.where, p.name) {
+				return true
+			}
+		} else if strings.EqualFold(entry, p.name) {
+			return true
+		}
+	}
+
+	return false
+}
+
 // logUncovered lists the id-looking names no kind typed and Plain does not
-// name, with where they sit, a few places each.
+// name, with where they sit, a few places each; and, since Plain "id" is one
+// word over many places, the models whose bare id it leaves plain, where a
+// kind's id under another model's name would hide.
 func (im *importer) logUncovered(places []place, typed map[*definitions.TypeRef]string) {
+	var plainModels []string
 	byName := map[string][]string{}
 	for i := range places {
 		p := &places[i]
-		if !idLike.MatchString(p.name) || typed[p.typ] != "" || slices.ContainsFunc(im.cfg.Plain, func(n string) bool { return strings.EqualFold(n, p.name) }) {
+		if strings.EqualFold(p.name, "id") && p.model != "" && (typed[p.typ] == "" || typed[p.typ] == "-") && im.plain(p) {
+			plainModels = append(plainModels, p.model)
+		}
+		if !idLike.MatchString(p.name) || typed[p.typ] != "" || im.plain(p) {
 			continue
 		}
 		switch p.typ.Type {
@@ -347,6 +395,32 @@ func (im *importer) logUncovered(places []place, typed map[*definitions.TypeRef]
 			continue
 		}
 		byName[p.name] = append(byName[p.name], p.where)
+	}
+	if len(plainModels) > 0 && len(im.cfg.IDs) > 0 {
+		// a model named for a kind's model (SeasonPassSeriesResource for SeriesResource) is where a kind's id hides, so it goes first
+		looksLike := func(model string) bool {
+			for _, c := range im.cfg.IDs {
+				for _, of := range c.Of {
+					stem := strings.TrimSuffix(strings.TrimSuffix(typeName(of), "Resource"), "Dto")
+					if stem != "" && typeName(of) != model && strings.Contains(model, stem) {
+						return true
+					}
+				}
+			}
+
+			return false
+		}
+		slices.SortStableFunc(plainModels, func(a, b string) int {
+			switch la, lb := looksLike(a), looksLike(b); {
+			case la && !lb:
+				return -1
+			case lb && !la:
+				return 1
+			default:
+				return strings.Compare(a, b)
+			}
+		})
+		im.log(fmt.Sprintf("%s: the bare id of %s is left plain (those named like a kind's model first): %s", im.cfg.Name, placesWord(len(plainModels)), strings.Join(plainModels, ", ")))
 	}
 	if len(byName) == 0 {
 		return

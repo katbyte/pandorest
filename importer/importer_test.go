@@ -1203,7 +1203,7 @@ func TestIDs(t *testing.T) {
 		{Name: "EpisodeID", Of: []string{"EpisodeResource"}, Names: []string{"episodeIds"}},
 		{Name: "TagID", Of: []string{"TagResource"}, Names: []string{"tags"}},
 		{Name: "TvdbID", Base: "int", Names: []string{"tvdbId"}, Except: []string{"GET /series tvdbId"}},
-	}, Plain: []string{"downloadId"}}
+	}, Plain: []string{"downloadId", "GetCommandByIdResponse .id"}}
 	svc, err := FromSpec(cfg, spec, nil, func(msg string) { logged = append(logged, msg) })
 	if err != nil {
 		t.Fatal(err)
@@ -1256,7 +1256,7 @@ func TestIDs(t *testing.T) {
 	if len(svc.IDs) != 4 || svc.IDs[0] != (definitions.IDKind{Name: "SeriesID", Base: definitions.Integer}) || svc.IDs[3].Base != definitions.Integer {
 		t.Errorf("kinds = %+v", svc.IDs)
 	}
-	for _, want := range []string{"arr: ids: SeriesID in 9 places (5 from Of, 3 by name, 1 by In)", "arr: ids: TvdbID in 1 place (0 from Of, 1 by name, 0 by In)", "arr: 2 names look like ids and have no kind (give each a kind in IDs, or leave it in Plain): episodeFileId in EpisodeResource; id in GetCommandByIdResponse, GET /command/{id}"} {
+	for _, want := range []string{"arr: ids: SeriesID in 9 places (5 from Of, 3 by name, 1 by In)", "arr: ids: TvdbID in 1 place (0 from Of, 1 by name, 0 by In)", "arr: the bare id of 1 place is left plain (those named like a kind's model first): GetCommandByIdResponse", "arr: 2 names look like ids and have no kind (give each a kind in IDs, or leave it in Plain): episodeFileId in EpisodeResource; id in GET /command/{id}"} {
 		if !slices.ContainsFunc(logged, func(l string) bool { return strings.HasPrefix(l, want) }) {
 			t.Errorf("the log lacks %q:\n%s", want, strings.Join(logged, "\n"))
 		}
@@ -1268,14 +1268,16 @@ func TestIDs(t *testing.T) {
 		plain []string
 		want  string
 	}{
-		"a kind reaching nothing":     {ids: []config.ID{{Name: "GhostID", Base: "int", Names: []string{"ghostId"}}}, want: "the id kind GhostID reaches no field, option or path parameter"},
-		"a model that is not there":   {ids: []config.ID{{Name: "GhostID", Of: []string{"Ghost"}}}, want: "GhostID: Of names Ghost, which is not a model of the document"},
-		"a model with no id":          {ids: []config.ID{{Name: "GhostID", Of: []string{"GetCommandByIdResponse"}, Names: []string{"seriesId"}}}, want: ""},
-		"two kinds on one place":      {ids: []config.ID{{Name: "SeriesID", Of: []string{"SeriesResource"}}, {Name: "OtherID", Base: "int", Names: []string{"id"}}}, want: "SeriesResource id is claimed by SeriesID and OtherID"},
-		"a name both typed and plain": {ids: []config.ID{{Name: "SeriesID", Of: []string{"SeriesResource"}, Names: []string{"seriesId"}}}, plain: []string{"seriesId"}, want: "seriesId is both a name of SeriesID and in Plain"},
-		"an In matching nothing":      {ids: []config.ID{{Name: "SeriesID", Of: []string{"SeriesResource"}, In: []string{"SeriesResource .nothing"}}}, want: `SeriesID: In "SeriesResource .nothing" matches no plain id`},
-		"a string kind on a number":   {ids: []config.ID{{Name: "SeriesID", Base: "string", Names: []string{"seriesId"}}}, want: "GET /episode seriesId is a Integer, which cannot be a SeriesID (String)"},
-		"a base that is not a type":   {ids: []config.ID{{Name: "SeriesID", Base: "float", Names: []string{"seriesId"}}}, want: `SeriesID: Base "float" is not int, int64 or string`},
+		"a kind reaching nothing":          {ids: []config.ID{{Name: "GhostID", Base: "int", Names: []string{"ghostId"}}}, want: "the id kind GhostID reaches no field, option or path parameter"},
+		"a model that is not there":        {ids: []config.ID{{Name: "GhostID", Of: []string{"Ghost"}}}, want: "GhostID: Of names Ghost, which is not a model of the document"},
+		"a model with no id":               {ids: []config.ID{{Name: "GhostID", Of: []string{"GetCommandByIdResponse"}, Names: []string{"seriesId"}}}, want: ""},
+		"two kinds on one place":           {ids: []config.ID{{Name: "SeriesID", Of: []string{"SeriesResource"}}, {Name: "OtherID", Base: "int", Names: []string{"id"}}}, want: "SeriesResource id is claimed by SeriesID and OtherID"},
+		"a name both typed and plain":      {ids: []config.ID{{Name: "SeriesID", Of: []string{"SeriesResource"}, Names: []string{"seriesId"}}}, plain: []string{"seriesId"}, want: "seriesId is both a name of SeriesID and in Plain"},
+		"an In the inference makes stale":  {ids: []config.ID{{Name: "SeriesID", Of: []string{"SeriesResource"}, In: []string{"GET /series/{id} id"}}}, want: `SeriesID: In "GET /series/{id} id" is not needed, Of or Names type it, so remove it`},
+		"an In matching nothing":           {ids: []config.ID{{Name: "SeriesID", Of: []string{"SeriesResource"}, In: []string{"SeriesResource .nothing"}}}, want: `SeriesID: In "SeriesResource .nothing" matches no plain id`},
+		"a string kind on a number":        {ids: []config.ID{{Name: "SeriesID", Base: "string", Names: []string{"seriesId"}}}, want: "GET /episode seriesId is a Integer, which cannot be a SeriesID (String)"},
+		"a joined string not named Joined": {ids: []config.ID{{Name: "SeriesID", Of: []string{"SeriesResource"}, Names: []string{"ids"}}}, want: "GET /series ids is a String, which cannot be a SeriesID (Integer); a string that carries several joined by commas is named in Joined"},
+		"a base that is not a type":        {ids: []config.ID{{Name: "SeriesID", Base: "float", Names: []string{"seriesId"}}}, want: `SeriesID: Base "float" is not int, int64 or string`},
 	} {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()

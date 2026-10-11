@@ -264,8 +264,12 @@ type Service struct {
 	// the plain int or string the document declares (type SeriesID int), so
 	// that the compiler refuses a series id where an episode id goes. Every
 	// id not in a kind stays as the document has it; Plain names the
-	// id-looking ones left so on purpose, which quiets the import's log of
-	// the ones no kind covers. Off, nothing changes.
+	// id-looking ones left so on purpose, by name wherever they sit or by
+	// a place as In takes it ("SeasonPassSeriesResource .id"), which quiets
+	// the import's log of the ones no kind covers. An id among an
+	// operation's options is held by value once typed, so 0 or "" is not
+	// sent: a server that mints 0 as an id would need its kind kept plain.
+	// Off, nothing changes.
 	IDs   []ID
 	Plain []string
 	// InlineSingleOptions has an operation with one query or header
