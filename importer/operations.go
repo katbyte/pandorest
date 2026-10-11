@@ -1,6 +1,7 @@
 package importer
 
 import (
+	"cmp"
 	"fmt"
 	"go/token"
 	"net/http"
@@ -74,7 +75,7 @@ func (im *importer) groupName(where string, op *openapi.Operation) (tag, name st
 		im.warn(fmt.Sprintf("%s: has tags %v; grouped under the first", where, op.Tags))
 	}
 	tag = op.Tags[0]
-	name = camel(strings.TrimSuffix(tag, im.cfg.TagSuffix))
+	name = openapi.Camel(strings.TrimSuffix(tag, im.cfg.TagSuffix))
 	if name == "" || name == definitions.CommonGroup {
 		im.fail(fmt.Sprintf("%s: tag %q cannot be a group name", where, tag))
 	}
@@ -100,7 +101,7 @@ func (im *importer) operation(method, path string, op *openapi.Operation) defini
 	case op.OperationID == "":
 		im.fail(fmt.Sprintf("%s %s: has no operationId to name its method after", method, path))
 	default:
-		want = camel(op.OperationID)
+		want = openapi.Camel(op.OperationID)
 	}
 
 	description := cleanText(op.Summary)
@@ -155,7 +156,7 @@ func (im *importer) operation(method, path string, op *openapi.Operation) defini
 		default:
 			continue
 		}
-		field := fieldName(prm.Name)
+		field := cmp.Or(prm.Field, fieldName(prm.Name))
 		if prev, ok := fields[field]; ok {
 			im.warn(fmt.Sprintf("%s %s: parameters %q and %q are both field %s; %q skipped", method, path, prev, prm.Name, field, prm.Name))
 			continue

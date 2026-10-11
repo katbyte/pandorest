@@ -119,13 +119,27 @@ func TestReadyMade(t *testing.T) {
 	if nested := spec.Components.Schemas["Thing"].Properties["details"].Properties["status"]; nested.RefName() != "" || nested.Type != openapi.TypeString {
 		t.Errorf("the details' status, outside In, was declared the enum: %+v", nested)
 	}
+	var kinds, names []string
 	for _, prm := range spec.Operation("GET", "/Things").Parameters {
 		switch {
-		case prm.Name == "kinds" && (prm.Schema.Type != openapi.TypeArray || prm.Schema.Items.RefName() != "Kind" || prm.Exploded()):
-			t.Errorf("kinds is not a joined list of Kind: %+v", prm.Schema)
-		case prm.Name == "names" && (prm.Schema.Type != openapi.TypeArray || prm.Schema.Items.Type != openapi.TypeString || prm.Exploded()):
-			t.Errorf("names is not a joined list of strings: %+v", prm.Schema)
+		case prm.Name == "kinds" && prm.Added:
+			kinds = append(kinds, "list")
+			if prm.Schema.Type != openapi.TypeArray || prm.Schema.Items.RefName() != "Kind" || prm.Exploded() || prm.Field != "KindsList" {
+				t.Errorf("kinds is not a joined list of Kind beside the string: %+v field %q", prm.Schema, prm.Field)
+			}
+		case prm.Name == "kinds":
+			kinds = append(kinds, prm.Schema.Type)
+		case prm.Name == "names" && prm.Added:
+			names = append(names, "list")
+			if prm.Schema.Type != openapi.TypeArray || prm.Schema.Items.Type != openapi.TypeString || prm.Exploded() || prm.Field != "NamesList" {
+				t.Errorf("names is not a joined list of strings beside the string: %+v field %q", prm.Schema, prm.Field)
+			}
+		case prm.Name == "names":
+			names = append(names, prm.Schema.Type)
 		}
+	}
+	if !slices.Equal(kinds, []string{"string", "list"}) || !slices.Equal(names, []string{"string", "list"}) {
+		t.Errorf("kinds %v, names %v: the string must stay with the list added", kinds, names)
 	}
 	if note := spec.Components.Schemas["Note"].Properties; note["createdAt"].Format != "" {
 		t.Errorf("the excepted createdAt was declared a date: %q", note["createdAt"].Format)

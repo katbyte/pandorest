@@ -3,6 +3,8 @@ package importer
 import (
 	"reflect"
 	"testing"
+
+	"github.com/katbyte/pandorest/openapi"
 )
 
 func TestCamel(t *testing.T) {
@@ -24,8 +26,8 @@ func TestCamel(t *testing.T) {
 		{"", ""},
 	}
 	for _, tt := range tests {
-		if got := camel(tt.in); got != tt.want {
-			t.Errorf("camel(%q) = %q, want %q", tt.in, got, tt.want)
+		if got := openapi.Camel(tt.in); got != tt.want {
+			t.Errorf("openapi.Camel(%q) = %q, want %q", tt.in, got, tt.want)
 		}
 	}
 }

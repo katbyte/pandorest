@@ -11,6 +11,7 @@ import (
 	"os"
 	"slices"
 	"strings"
+	"unicode"
 )
 
 // Spec is an OpenAPI 3 document.
@@ -67,6 +68,10 @@ type Parameter struct {
 	// can say of its own: the importer keeps an added header named Accept,
 	// where it ignores a document's as OpenAPI says to.
 	Added bool `json:"-"`
+	// Field is the Go field a workaround chose for the parameter, when the
+	// name's own would clash with another parameter of the same name
+	// (a list added beside the string it joins); "" is the name's own.
+	Field string `json:"-"`
 }
 
 // Exploded reports whether an array parameter is sent as one key per value
@@ -429,4 +434,31 @@ func (p Place) Matches(where, path string) bool {
 	default:
 		return path == p.Path
 	}
+}
+
+// Camel joins the alphanumeric pieces of s, upper-casing the first letter of
+// each piece and keeping the rest as spelled: "QueryResult_BaseItemDto" →
+// "QueryResultBaseItemDto", "master.m3u8" → "MasterM3u8", "user_usage_stats"
+// → "UserUsageStats", "GetFirstUser_2" → "GetFirstUser2". A leading digit gets
+// an "N" prefix so the result is always a valid identifier.
+func Camel(s string) string {
+	var b strings.Builder
+	upNext := true
+	for _, r := range s {
+		if !unicode.IsLetter(r) && !unicode.IsDigit(r) {
+			upNext = true
+			continue
+		}
+		if upNext {
+			r = unicode.ToUpper(r)
+			upNext = false
+		}
+		b.WriteRune(r)
+	}
+	out := b.String()
+	if out != "" && unicode.IsDigit(rune(out[0])) {
+		out = "N" + out
+	}
+
+	return out
 }

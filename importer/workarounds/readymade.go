@@ -616,11 +616,13 @@ type Joined struct {
 
 // JoinedLists is for the parameters a document declares as one string that
 // the server reads as several values joined by commas (Emby's
-// IncludeItemTypes), so that the package takes a list, of an enum or of
+// IncludeItemTypes), so that the package also takes a list, of an enum or of
 // strings, and a caller hands two servers the same list where one takes it
-// joined and the other repeated. It fails for a name no plain string
-// parameter has, an Of that is not an enum schema of the document or
-// "string", and an In that matches nothing.
+// joined and the other repeated. The string stays as it is; the list is
+// added beside it as <Field>List, sent under the same name joined, so no
+// caller moves. It fails for a name no plain string parameter has, an Of
+// that is not an enum schema of the document or "string", and an In that
+// matches nothing.
 func JoinedLists(about About, lists map[string]Joined) Workaround {
 	return readyMade{about, func(spec *openapi.Spec, note func(string)) error {
 		if len(lists) == 0 {
@@ -636,7 +638,7 @@ func JoinedLists(about About, lists map[string]Joined) Workaround {
 				}
 				item = &openapi.Schema{Ref: openapi.SchemaRefPrefix + j.Of}
 			}
-			marked, inUsed := 0, make([]bool, len(j.In))
+			marked, already, inUsed := 0, 0, make([]bool, len(j.In))
 			for _, path := range openapi.SortedKeys(spec.Paths) {
 				p := spec.Paths[path]
 				for method, op := range map[string]*openapi.Operation{"GET": p.Get, "POST": p.Post, "PUT": p.Put, "DELETE": p.Delete, "PATCH": p.Patch} {
@@ -651,12 +653,19 @@ func JoinedLists(about About, lists map[string]Joined) Workaround {
 							continue
 						}
 					}
+					if slices.ContainsFunc(op.Parameters, func(prm *openapi.Parameter) bool {
+						return strings.EqualFold(prm.Name, name) && prm.Schema != nil && prm.Schema.Type == openapi.TypeArray
+					}) {
+						// the list is there already, declared by the document or by an earlier run of this
+						already++
+
+						continue
+					}
 					for _, prm := range op.Parameters {
 						if !strings.EqualFold(prm.Name, name) || prm.In != openapi.InQuery || prm.Schema == nil || prm.Schema.Type != openapi.TypeString || prm.Schema.IsEnum() {
 							continue
 						}
-						prm.Schema = &openapi.Schema{Type: openapi.TypeArray, Items: item, Description: prm.Schema.Description}
-						prm.Explode = new(false)
+						op.Parameters = append(op.Parameters, &openapi.Parameter{Name: prm.Name, In: openapi.InQuery, Description: strings.TrimSpace(prm.Description + "\n\nAs a list, sent joined by commas under the same name; set this or the string, not both."), Schema: &openapi.Schema{Type: openapi.TypeArray, Items: item}, Explode: new(false), Added: true, Field: openapi.Camel(prm.Name) + "List"})
 						marked++
 						if in >= 0 {
 							inUsed[in] = true
@@ -669,7 +678,10 @@ func JoinedLists(about About, lists map[string]Joined) Workaround {
 					return fmt.Errorf("%s: In %q matches no operation", name, j.In[i])
 				}
 			}
-			if marked == 0 {
+			switch {
+			case marked == 0 && already > 0:
+				return fmt.Errorf("every %s has its list already", name)
+			case marked == 0:
 				return fmt.Errorf("no plain string parameter is called %s", name)
 			}
 			note(fmt.Sprintf("%s as a list of %s in %s", name, j.Of, placesWord(marked)))

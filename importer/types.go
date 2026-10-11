@@ -202,7 +202,7 @@ func (im *importer) constant(name, schemaName string, s *openapi.Schema) *defini
 	c := &definitions.Constant{Name: name, SchemaName: schemaName, Description: cleanText(s.Description)}
 	seen := map[string]string{}
 	for _, v := range s.EnumValues() {
-		cname := name + camel(v)
+		cname := name + openapi.Camel(v)
 		if prev, ok := seen[cname]; ok {
 			im.warn(fmt.Sprintf("%s: values %q and %q are both %s; %q skipped", name, prev, v, cname, v))
 			continue
