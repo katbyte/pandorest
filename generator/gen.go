@@ -615,7 +615,11 @@ func (g *gen) docFile() string {
 // it.
 `)
 	if g.paged != nil {
-		fmt.Fprintf(&b, "//\n// A list operation, one whose options page with %s and %s, also has a\n// <Name>Complete method that pages through every result.\n", g.paged.Pageable.StartIndexOption, g.paged.Pageable.LimitOption)
+		pages := g.paged.Pageable.StartIndexOption
+		if g.paged.Pageable.LimitOption != "" {
+			pages += " and " + g.paged.Pageable.LimitOption
+		}
+		fmt.Fprintf(&b, "//\n// A list operation, one whose options page with %s, also has a\n// <Name>Complete method that pages through every result.\n", pages)
 	}
 	if notes := comment("", g.opts.Notes); notes != "" {
 		b.WriteString("//\n")

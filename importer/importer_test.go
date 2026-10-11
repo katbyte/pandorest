@@ -1116,3 +1116,52 @@ func TestRedirectAnswers(t *testing.T) {
 		}
 	}
 }
+
+// A service whose lists page in more than one shape names each in Paging and
+// Pagings: a shape without a limit (TMDB's page of twenty) and one that
+// leaves the list's name to the answer (Dockhand's logs and events) both
+// mark their lists, and an operation that takes a shape's Start and matches
+// none is named in the log with why.
+func TestPagingShapes(t *testing.T) {
+	t.Parallel()
+
+	spec, err := openapi.Parse([]byte(`{"openapi": "3.0.1", "info": {"title": "Mixed", "version": "1"}, "paths": {
+    "/popular": {"get": {"operationId": "GetPopular", "tags": ["Movies"], "parameters": [{"name": "page", "in": "query", "schema": {"type": "integer"}}],
+      "responses": {"200": {"content": {"application/json": {"schema": {"type": "object", "properties": {"page": {"type": "integer"}, "results": {"type": "array", "items": {"type": "object", "properties": {"id": {"type": "integer"}}}}, "total_pages": {"type": "integer"}, "total_results": {"type": "integer"}}}}}}}}},
+    "/audit": {"get": {"operationId": "GetAudit", "tags": ["Audit"], "parameters": [{"name": "limit", "in": "query", "schema": {"type": "integer"}}, {"name": "offset", "in": "query", "schema": {"type": "integer"}}],
+      "responses": {"200": {"content": {"application/json": {"schema": {"type": "object", "properties": {"logs": {"type": "array", "items": {"type": "object", "properties": {"id": {"type": "integer"}}}}, "total": {"type": "integer"}}}}}}}}},
+    "/scan": {"get": {"operationId": "GetScan", "tags": ["Audit"], "parameters": [{"name": "limit", "in": "query", "schema": {"type": "integer"}}, {"name": "offset", "in": "query", "schema": {"type": "integer"}}],
+      "responses": {"200": {"content": {"application/json": {"schema": {"type": "object", "properties": {"findings": {"type": "array", "items": {"type": "string"}}, "fixes": {"type": "array", "items": {"type": "string"}}, "total": {"type": "integer"}}}}}}}}},
+    "/changes": {"get": {"operationId": "GetChanges", "tags": ["Movies"], "parameters": [{"name": "page", "in": "query", "schema": {"type": "integer"}}],
+      "responses": {"200": {"content": {"application/json": {"schema": {"type": "object", "properties": {"changes": {"type": "array", "items": {"type": "string"}}}}}}}}}}}}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var logged []string
+	cfg := config.Service{Name: "mixed", Package: "mixed", Naming: config.OperationIDNaming, Auth: "Token", Paging: &config.Paging{Start: "page", Items: "results", Total: "total_results", ByPage: true}, Pagings: []config.Paging{{Start: "offset", Limit: "limit", Total: "total"}}}
+	svc, err := FromSpec(cfg, spec, nil, func(msg string) { logged = append(logged, msg) })
+	if err != nil {
+		t.Fatal(err)
+	}
+	ops := map[string]*definitions.Operation{}
+	for _, o := range svc.Operations() {
+		ops[o.Name] = o
+	}
+	if p := ops["GetPopular"].Pageable; p == nil || p.LimitOption != "" || !p.ByPage || p.ItemsField != "Results" || p.TotalField != "TotalResults" {
+		t.Errorf("a page-only shape = %+v", p)
+	}
+	if p := ops["GetAudit"].Pageable; p == nil || p.LimitOption != "Limit" || p.StartIndexOption != "Offset" || p.ByPage || p.ItemsField != "Logs" || p.TotalField != "Total" {
+		t.Errorf("an offset shape with the list found by itself = %+v", p)
+	}
+	if ops["GetScan"].Pageable != nil || ops["GetChanges"].Pageable != nil {
+		t.Error("an answer with two lists, or without a total, was marked a list")
+	}
+	for _, want := range []string{
+		"mixed: warning: GET /scan takes a paging parameter and gets no Complete method: it takes offset but its answer GetScanResponse has 2 lists, so Items must name one",
+		"mixed: warning: GET /changes takes a paging parameter and gets no Complete method: it takes page but its answer GetChangesResponse has no list results",
+	} {
+		if !slices.Contains(logged, want) {
+			t.Errorf("the log lacks %q:\n%s", want, strings.Join(logged, "\n"))
+		}
+	}
+}

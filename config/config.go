@@ -43,11 +43,17 @@ const (
 type Paging struct {
 	// Start and Limit are the query parameters: where to start and how many
 	// to answer. Start is the index of the first result wanted, from 0
-	// (Emby's StartIndex and Limit), unless ByPage says it is a page.
+	// (Emby's StartIndex and Limit), unless ByPage says it is a page. Limit
+	// may be empty for a service whose page size is the server's to choose
+	// (TMDB's page of twenty); the pager then takes the first page's size
+	// as the page size, and ByPage must be set.
 	Start string
 	Limit string
 	// Items and Total are the properties of the answer: the page's results
 	// and how many there are in all (Emby's Items and TotalRecordCount).
+	// Items may be empty for a service that names the list differently on
+	// each answer (Dockhand's logs, events, findings): the answer's one
+	// list property is then the items, and an answer with two is no list.
 	Items string
 	Total string
 	// ByPage says Start is a page number, counted from 1, rather than an
@@ -158,8 +164,13 @@ type Service struct {
 	// says: how it writes its dates, say.
 	Notes string
 	// Paging says how the service's lists page; nil is a service whose
-	// operations get no Complete method.
-	Paging *Paging
+	// operations get no Complete method. Pagings are further shapes, for a
+	// service whose lists do not all page alike (Dockhand's offset and
+	// limit on some, page and pageSize on others), tried in order after
+	// Paging. The import names each operation that takes a Start one of
+	// them names and matches none, and why.
+	Paging  *Paging
+	Pagings []Paging
 	// PreferJSON reads a response that lists JSON beside another media type
 	// as JSON: Swashbuckle lists application/json, text/json and text/plain
 	// for every action ASP.NET's formatters can answer, and the text/plain

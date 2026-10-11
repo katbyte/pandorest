@@ -592,6 +592,10 @@ func (g *gen) completeTest(o *definitions.Operation, call testCallInfo) string {
 		args += ", "
 	}
 	options := func(limit int) string {
+		if p.LimitOption == "" {
+			return g.typeName(o.Name) + "Options{}"
+		}
+
 		return fmt.Sprintf("%sOptions{%s: new(%d)}", g.typeName(o.Name), p.LimitOption, limit)
 	}
 
@@ -609,7 +613,10 @@ func (g *gen) completeTest(o *definitions.Operation, call testCallInfo) string {
 	}
 	fmt.Fprintf(&b, "\t\t{\"total reached\", 2, 9, %s, 2, []string{%s}},\n", options(1), starts[0])
 	fmt.Fprintf(&b, "\t\t{\"empty page\", 0, 2, %s, 2, []string{%s}},\n", options(1), starts[1])
-	fmt.Fprintf(&b, "\t\t{\"short page\", 0, 9, %s, 1, []string{%s}},\n", options(2), starts[2])
+	if p.LimitOption != "" {
+		// with the server's page size learnt from the first page, every page it answers is full
+		fmt.Fprintf(&b, "\t\t{\"short page\", 0, 9, %s, 1, []string{%s}},\n", options(2), starts[2])
+	}
 	b.WriteString("\t} {\n\t\tt.Run(tc.name, func(t *testing.T) {\n\t\t\tt.Parallel()\n\n")
 	fmt.Fprintf(&b, "\t\t\tc, starts := pagedServer(t, %q, %q, tc.total, tc.pages)\n", startName, g.sampleJSON(p.ItemType))
 	fmt.Fprintf(&b, "\t\t\tresult, err := c.%sComplete(%stc.options)\n", o.Name, args)

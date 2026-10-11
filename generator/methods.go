@@ -474,19 +474,29 @@ func (g *gen) writeCompleteMethod(b *strings.Builder, o *definitions.Operation, 
 	g.declare("Client."+method, "operation "+o.Name)
 	params, call := g.arguments(o, optionsType)
 
-	if p.ByPage {
+	switch {
+	case p.ByPage && p.LimitOption == "":
+		fmt.Fprintf(b, "// %s calls %s page by page, from the\n", method, o.Name)
+		fmt.Fprintf(b, "// page options.%s names (the first when unset), until every result is loaded.\n", p.StartIndexOption)
+		b.WriteString("// The page size is the server's: a page shorter than the first is the last.\n")
+	case p.ByPage:
 		fmt.Fprintf(b, "// %s calls %s page by page, from the\n", method, o.Name)
 		fmt.Fprintf(b, "// page options.%s names (the first when unset), until every result is loaded.\n", p.StartIndexOption)
 		fmt.Fprintf(b, "// options.%s is the page size, client.DefaultPageSize when unset.\n", p.LimitOption)
-	} else {
+	default:
 		fmt.Fprintf(b, "// %s calls %s page by page from options.%s until every\n", method, o.Name, p.StartIndexOption)
 		fmt.Fprintf(b, "// result is loaded. options.%s is the page size, client.DefaultPageSize when\n// unset.\n", p.LimitOption)
 	}
 	fmt.Fprintf(b, "func (c Client) %s(%s) (result %s, err error) {\n", method, strings.Join(append([]string{"ctx context.Context"}, params...), ", "), resultType)
 	g.writeOptionsPrelude(b, o, method, optionsType)
 	ov := g.optionsVar(o)
-	fmt.Fprintf(b, "\tlimit := client.DefaultPageSize\n\tif %[2]s.%[1]s != nil && *%[2]s.%[1]s > 0 {\n\t\tlimit = *%[2]s.%[1]s\n\t}\n", p.LimitOption, ov)
-	fmt.Fprintf(b, "\t%s.%s = &limit\n", ov, p.LimitOption)
+	if p.LimitOption == "" {
+		// the server's page size, learnt from the first page
+		b.WriteString("\tlimit := 0\n")
+	} else {
+		fmt.Fprintf(b, "\tlimit := client.DefaultPageSize\n\tif %[2]s.%[1]s != nil && *%[2]s.%[1]s > 0 {\n\t\tlimit = *%[2]s.%[1]s\n\t}\n", p.LimitOption, ov)
+		fmt.Fprintf(b, "\t%s.%s = &limit\n", ov, p.LimitOption)
+	}
 	if p.ByPage {
 		fmt.Fprintf(b, "\tnumber := 1\n\tif %[2]s.%[1]s != nil && *%[2]s.%[1]s > 0 {\n\t\tnumber = *%[2]s.%[1]s\n\t}\n", p.StartIndexOption, ov)
 		fmt.Fprintf(b, "\t%s.%s = &number\n", ov, p.StartIndexOption)
@@ -500,13 +510,20 @@ func (g *gen) writeCompleteMethod(b *strings.Builder, o *definitions.Operation, 
 	b.WriteString("\t\tif err != nil {\n\t\t\terr = fmt.Errorf(\"loading results: %w\", err)\n\t\t\treturn\n\t\t}\n")
 	fmt.Fprintf(b, "\t\tif page.Model == nil || len(page.Model.%s) == 0 {\n\t\t\treturn\n\t\t}\n", p.ItemsField)
 	fmt.Fprintf(b, "\t\tresult.Items = append(result.Items, page.Model.%s...)\n", p.ItemsField)
-	if p.ByPage {
+	switch {
+	case p.ByPage && p.LimitOption == "":
+		b.WriteString("\t\t// the first page says how long a page is; a shorter one is the last, and\n")
+		b.WriteString("\t\t// so is the page that reaches the total, when the server reports one\n")
+		fmt.Fprintf(b, "\t\tif limit == 0 {\n\t\t\tlimit = len(page.Model.%s)\n\t\t}\n", p.ItemsField)
+		fmt.Fprintf(b, "\t\tif len(page.Model.%[1]s) < limit || page.Model.%[2]s > 0 && len(result.Items) >= page.Model.%[2]s {\n\t\t\treturn\n\t\t}\n", p.ItemsField, p.TotalField)
+		b.WriteString("\t\tnumber++\n")
+	case p.ByPage:
 		b.WriteString("\t\t// a short page is the last; so is the page that reaches the total, when\n")
 		b.WriteString("\t\t// the server reports one\n")
 		fmt.Fprintf(b, "\t\tif len(page.Model.%[1]s) < limit || page.Model.%[2]s > 0 && number*limit >= page.Model.%[2]s {\n\t\t\treturn\n\t\t}\n", p.ItemsField, p.TotalField)
 		// options holds a pointer to number, so the next call asks for the next page
 		b.WriteString("\t\tnumber++\n")
-	} else {
+	default:
 		fmt.Fprintf(b, "\t\tstart += len(page.Model.%s)\n\t\t%s.%s = &start\n", p.ItemsField, ov, p.StartIndexOption)
 		b.WriteString("\t\t// a short page is the last; so is reaching the total, when the server\n")
 		b.WriteString("\t\t// reports one (a list may report 0 whatever it holds)\n")

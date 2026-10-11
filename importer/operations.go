@@ -431,16 +431,37 @@ func (im *importer) sameAnswer(resp *openapi.Response, success *definitions.Body
 	return im.responseType(resp.Content[ct].Schema, owner).Equal(success.Type)
 }
 
-// markPageable flags the list operations: the GETs that take the two paging
-// parameters the service's config names and answer a model with its two
-// paging properties (Emby's StartIndex and Limit, Items and
-// TotalRecordCount; Sonarr's page and pageSize, records and totalRecords). A
-// service with no paging configured has none.
+// markPageable flags the list operations: the GETs that take the paging
+// parameters one of the service's paging shapes names and answer a model
+// with its paging properties (Emby's StartIndex and Limit, Items and
+// TotalRecordCount; Sonarr's page and pageSize, records and totalRecords).
+// The shapes are tried in order, and an operation that takes a shape's Start
+// and matches none is named in the log with why, which is how a service's
+// next shape is found. A service with no paging configured has none.
 func (im *importer) markPageable(o *definitions.Operation) {
-	paging := im.cfg.Paging
-	if paging == nil || o.Method != http.MethodGet || o.Response == nil || o.Response.Type.Type != definitions.Reference {
+	if im.cfg.Paging == nil || o.Method != http.MethodGet {
 		return
 	}
+	var reasons []string
+	for _, paging := range append([]config.Paging{*im.cfg.Paging}, im.cfg.Pagings...) {
+		pageable, reason := im.pageable(o, &paging)
+		if pageable != nil {
+			o.Pageable = pageable
+
+			return
+		}
+		if reason != "" {
+			reasons = append(reasons, reason)
+		}
+	}
+	if len(reasons) > 0 {
+		im.warn(fmt.Sprintf("%s %s takes a paging parameter and gets no Complete method: %s", o.Method, o.Path, strings.Join(reasons, "; ")))
+	}
+}
+
+// pageable is how o pages by one shape, or why it does not: empty when it
+// does not take the shape's Start at all, which is no list of this shape.
+func (im *importer) pageable(o *definitions.Operation, paging *config.Paging) (pageable *definitions.Pageable, reason string) {
 	var start, limit string
 	for _, opt := range o.Options {
 		if opt.In != definitions.InQuery || opt.Type.Type != definitions.Integer {
@@ -449,33 +470,49 @@ func (im *importer) markPageable(o *definitions.Operation) {
 		switch {
 		case strings.EqualFold(opt.Name, paging.Start):
 			start = opt.Field
-		case strings.EqualFold(opt.Name, paging.Limit):
+		case paging.Limit != "" && strings.EqualFold(opt.Name, paging.Limit):
 			limit = opt.Field
 		}
 	}
-	model := im.models[o.Response.Type.ReferenceName]
-	if start == "" || limit == "" || model == nil {
-		return
+	if start == "" {
+		return nil, ""
 	}
+	if paging.Limit != "" && limit == "" {
+		return nil, fmt.Sprintf("it takes %s but not %s", paging.Start, paging.Limit)
+	}
+	if o.Response == nil || o.Response.Type.Type != definitions.Reference || im.models[o.Response.Type.ReferenceName] == nil {
+		return nil, fmt.Sprintf("it takes %s but answers no object", paging.Start)
+	}
+	model := im.models[o.Response.Type.ReferenceName]
 	var items, total *definitions.Field
+	lists := 0
 	for i := range model.Fields {
 		f := &model.Fields[i]
 		switch {
-		case strings.EqualFold(f.JSONName, paging.Items) && f.Type.Type == definitions.List && f.Type.NestedItem != nil:
+		case f.Type.Type == definitions.List && f.Type.NestedItem != nil && (paging.Items == "" || strings.EqualFold(f.JSONName, paging.Items)):
 			items = f
+			lists++
 		case strings.EqualFold(f.JSONName, paging.Total) && f.Type.Type == definitions.Integer:
 			total = f
 		}
 	}
-	if items == nil || total == nil {
-		return
+	switch {
+	case paging.Items != "" && items == nil:
+		return nil, fmt.Sprintf("it takes %s but its answer %s has no list %s", paging.Start, model.Name, paging.Items)
+	case items == nil:
+		return nil, fmt.Sprintf("it takes %s but its answer %s has no list", paging.Start, model.Name)
+	case paging.Items == "" && lists > 1:
+		return nil, fmt.Sprintf("it takes %s but its answer %s has %d lists, so Items must name one", paging.Start, model.Name, lists)
+	case total == nil:
+		return nil, fmt.Sprintf("it takes %s but its answer %s has no %s", paging.Start, model.Name, paging.Total)
 	}
-	o.Pageable = &definitions.Pageable{
+
+	return &definitions.Pageable{
 		StartIndexOption: start,
 		LimitOption:      limit,
 		ByPage:           paging.ByPage,
 		ItemsField:       items.Name,
 		TotalField:       total.Name,
 		ItemType:         *items.Type.NestedItem,
-	}
+	}, ""
 }

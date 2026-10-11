@@ -12,7 +12,7 @@ pandorest generates typed Go Services from vendored OpenAPI documents. It was wr
 
 Inspired by [Pandora](https://github.com/hashicorp/pandora), the [go-azure-sdk](https://github.com/hashicorp/go-azure-sdk) generator: the same importer, definitions, differ and generator pipeline, scaled down to a handful of documents in one repository:
 
-```
+```text
 api-defs/
   emby-openapi-4.10.0.40.json ──┐               ┌─ emby-4.10.0.40/*.json ──┐
   jellyfin-openapi-12.1.0.json ─┼─ import ──────┼─ jellyfin-12.1.0/*.json ─┼─ generate ─ sdk/emby, sdk/jf, sdk/tmdb
@@ -104,7 +104,7 @@ Everything about a service is in its `config.Service`, and everything but the fi
 | `Naming` | `PathNaming` names a method after its HTTP method and path, `OperationIDNaming` after its operationId |
 | `PathPrefix`, `Words` | for path naming: a prefix left out of names (`/api/v3`), and the spelling of run-together segments (`episodefile` as `EpisodeFile`) |
 | `TagSuffix` | trimmed from tags to make group names (`Service` on Emby) |
-| `Paging` | the two query parameters and two answer properties that make an operation a list, and whether it pages by start index or by page number; a list gets a `Complete` method |
+| `Paging`, `Pagings` | the query parameters and answer properties that make an operation a list, and whether it pages by start index or by page number; a list gets a `Complete` method. `Limit` may be left empty where the server fixes the page size (TMDB), and `Items` where each answer names its list differently (Dockhand). `Pagings` are further shapes for a service whose lists do not all page alike; `import` logs every operation that takes a shape's start parameter and matches none, with why, which is how the next shape is found |
 | `KeepNull` | fields, as `Schema.property`, held as pointers because their zero is not their absence: a number whose null is not 0 (season 0 is the specials), or a string a server clears only when it is sent empty, where one held by value is left out when empty |
 | `WrittenWhole` | settings schemas read and written back whole, whose empty strings and zeros are sent rather than left out |
 | `SendRequired` | a property the document requires is always sent |
@@ -191,7 +191,7 @@ Workarounds are for the document's shape, what an operation takes and answers. B
 
 `diff` compares the checked-in definitions with a fresh import of each document, or two definitions directories with `-old` and `-new`, and prints what changed in API terms, for example:
 
-```
+```text
 emby: 1 added, 0 removed, 2 changed (1 breaking)
   document: Emby Server API 4.1.1.0 -> Emby Server API 4.10.0.0
 + operation GetItemsFilters3 (GET /Items/Filters3)
@@ -208,7 +208,7 @@ A change is breaking when it would break a caller of the generated SDK: a remova
 
 `generate` writes a service's SDK in one of two layouts. Grouped (`Grouped: true`) is laid out the way go-azure-sdk lays out a service, as packages, so a caller names every type as `emby.X`, reaches every operation through one client, and never imports a tag's package, whose name is then free to be a word the caller uses for a variable:
 
-```
+```text
 sdk/emby/                      package emby:  every model (model_<model>.go), every enum (constants_<tag>.go),
                                               every operation's options and response types (operation_<operation>.go),
                                               New for the base client (client.go), the base client's options and
@@ -236,7 +236,7 @@ Moving a repository from the flat layout is mostly a script over `groups.json`: 
 
 Flat (the default) writes one package per service, with a file per operation, per model and per tag's enums:
 
-```
+```text
 client.go                                 Client, New, APIVersion, DocumentVersion
 client_test.go                            the canned servers the generated tests share
 doc.go                                    package documentation, the workarounds applied
@@ -250,7 +250,7 @@ doc.go                                    package documentation, the workarounds
 
 Every generated file starts with the generated-code header; files with it that generation no longer produces are deleted, and anything without it is left alone, so hand-written files can live beside the generated ones, and one at a name generation writes to is refused rather than overwritten. The one exception to the header is `doc.go`, which starts with the package comment instead and says there that pandorest generated it: linters pass over a file with the header, and would tell a package with a hand-written file in it that it has no package comment. `generator.Generated` tells a generated file from one written by hand, `doc.go` included.
 
-A method takes `ctx`, the path parameters, the body (`input`: the model by value, or an `io.Reader` and a content type), then the options struct by value, and returns `(result <Name>OperationResponse, err error)`. When the document requires none of the options the struct may be left out, so a call with no filters is `c.GetSessions(ctx)`; two structs are refused before any request is made. With `InlineSingleOptions` an operation with one option takes it as an argument instead: `c.GetMovieLookup(ctx, term)` or `c.GetMovieLookup(ctx)`, `c.PostIndexer(ctx, v, false)` sending false where `c.PostIndexer(ctx, v)` sends nothing, a required one plain, a list as its elements; an operation with two or more keeps the struct, as does a list that pages:
+A method takes `ctx`, the path parameters, the body (`input`: the model by value, or an `io.Reader` and a content type), then the options struct by value, and returns `(result <Name>OperationResponse, err error)`. When the document requires none of the options the struct may be left out, so a call with no filters is `c.GetSessions(ctx)`; two structs are refused before any request is made. With `InlineSingleOptions` an operation with one option takes it as an argument instead: `c.GetMovieLookup(ctx, term)` or `c.GetMovieLookup(ctx)`, `c.PostIndexer(ctx, v, false)` sending false where `c.PostIndexer(ctx, v)` sends nothing, a required one plain, a list as its elements; an operation with two or more keeps the struct, as does a list that pages. Two things to know when moving to it: a value set only sometimes needs a slice at the call (`var force []bool; if cond { force = []bool{true} }; c.PostIndexer(ctx, v, force...)`), since the pointer that said "unset" is gone, and a required boolean or number is now always sent, where an empty struct used to leave it out. The options type is still generated, since the method builds one to send; no method takes it:
 
 ```go
 res, err := c.GetItems(ctx, emby.GetItemsOptions{Recursive: new(true), Limit: new(50)})

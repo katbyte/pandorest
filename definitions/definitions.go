@@ -146,9 +146,11 @@ func (b *Body) AsksFor() string {
 // Pageable says how a list operation pages.
 type Pageable struct {
 	// StartIndexOption and LimitOption are the options fields: where a page
-	// starts and how many results it holds.
+	// starts and how many results it holds. LimitOption is empty for a
+	// service whose page size is the server's to choose; the pager then
+	// takes the first page's size as the page size.
 	StartIndexOption string `json:"StartIndexOption"`
-	LimitOption      string `json:"LimitOption"`
+	LimitOption      string `json:"LimitOption,omitempty"`
 	// ByPage is set when the list pages by page number: StartIndexOption is
 	// then the page wanted, counted from 1, rather than the index of its
 	// first result.

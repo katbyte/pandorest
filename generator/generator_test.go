@@ -740,6 +740,35 @@ func TestInlineSingleOptions(t *testing.T) {
 	}
 }
 
+// A list that pages by page number alone, the page size being the server's
+// (TMDB), gets a pager that learns the size from the first page; its
+// generated test proves the walk.
+//
+//nolint:paralleltest // writes the testdata package the other tests would remove
+func TestPagerWithoutLimit(t *testing.T) {
+	spec, err := openapi.Parse([]byte(`{"openapi": "3.0.1", "info": {"title": "Mini", "version": "1"}, "paths": {
+    "/popular": {"get": {"operationId": "GetPopular", "tags": ["Movies"], "parameters": [{"name": "page", "in": "query", "schema": {"type": "integer"}}, {"name": "language", "in": "query", "schema": {"type": "string"}}],
+      "responses": {"200": {"content": {"application/json": {"schema": {"type": "object", "properties": {"page": {"type": "integer"}, "results": {"type": "array", "items": {"type": "object", "properties": {"id": {"type": "integer"}}}}, "total_pages": {"type": "integer"}, "total_results": {"type": "integer"}}}}}}}}}}}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg := config.Service{Name: "mini", Package: "mini", Naming: config.OperationIDNaming, Auth: "APIKey", Paging: &config.Paging{Start: "page", Items: "results", Total: "total_results", ByPage: true}}
+	svc, err := importer.FromSpec(cfg, spec, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir := generateInModule(t, svc, generator.Options{})
+	goTool(t, dir, "vet")
+	goTool(t, dir, "test")
+
+	src := read(t, dir, "movies_method_getpopular.go")
+	for _, want := range []string{"func (c Client) GetPopularComplete(ctx context.Context, options ...GetPopularOptions) (result GetPopularCompleteResult, err error) {", "limit := 0\n", "if limit == 0 {\n\t\t\tlimit = len(page.Model.Results)\n\t\t}", "len(result.Items) >= page.Model.TotalResults"} {
+		if !strings.Contains(src, want) {
+			t.Errorf("the pager lacks %q:\n%s", want, src)
+		}
+	}
+}
+
 // A credential named by a phrase is an argument called credential, and the
 // phrase words the refusal.
 func TestCredentialPhrase(t *testing.T) {
