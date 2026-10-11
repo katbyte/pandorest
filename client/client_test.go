@@ -12,6 +12,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"testing/iotest"
 	"time"
 
 	"github.com/katbyte/go-kt/chttp"
@@ -795,3 +796,62 @@ func TestParseTime(t *testing.T) {
 		t.Errorf("a number = %v", err)
 	}
 }
+
+// A file is copied out with the body closed whatever happens, the writer's
+// failure told from the server's, and read whole only up to a size.
+func TestFileHelpers(t *testing.T) {
+	t.Parallel()
+
+	body := &closing{Reader: strings.NewReader("file bytes")}
+	var out bytes.Buffer
+	if n, err := client.Copy(&out, body); err != nil || n != 10 || out.String() != "file bytes" || !body.closed {
+		t.Errorf("Copy = %d, %v, %q, closed %t", n, err, out.String(), body.closed)
+	}
+
+	body = &closing{Reader: strings.NewReader("file bytes")}
+	var writeErr *client.WriteError
+	if _, err := client.Copy(failing{}, body); !errors.As(err, &writeErr) || !strings.Contains(err.Error(), "writing the file: disk full") || !body.closed {
+		t.Errorf("Copy to a failing writer = %v, closed %t", err, body.closed)
+	}
+
+	body = &closing{Reader: iotest.ErrReader(errors.New("connection reset"))}
+	if _, err := client.Copy(&out, body); err == nil || !strings.Contains(err.Error(), "reading the file from the server: connection reset") || !body.closed {
+		t.Errorf("Copy from a broken server = %v, closed %t", err, body.closed)
+	}
+
+	body = &closing{Reader: strings.NewReader("file bytes")}
+	if data, err := client.ReadAtMost(body, 10); err != nil || string(data) != "file bytes" || !body.closed {
+		t.Errorf("ReadAtMost at the size = %q, %v, closed %t", data, err, body.closed)
+	}
+	body = &closing{Reader: strings.NewReader("file bytes")}
+	var tooLarge *client.TooLargeError
+	if _, err := client.ReadAtMost(body, 9); !errors.As(err, &tooLarge) || tooLarge.Max != 9 || !strings.Contains(err.Error(), "the file is over 9 bytes") || !body.closed {
+		t.Errorf("ReadAtMost over the size = %v, closed %t", err, body.closed)
+	}
+	if _, err := client.ReadAtMost(&closing{Reader: strings.NewReader("x")}, 0); err == nil || !strings.Contains(err.Error(), "more than 0 bytes") {
+		t.Errorf("ReadAtMost of nothing = %v", err)
+	}
+
+	for header, want := range map[string]string{`attachment; filename="backup.zip"`: "backup.zip", `attachment; filename*=UTF-8''na%C3%AFve.txt`: "naïve.txt", `inline`: "", ``: "", `garbage;;`: ""} {
+		h := http.Header{}
+		if header != "" {
+			h.Set("Content-Disposition", header)
+		}
+		if got := client.Filename(h); got != want {
+			t.Errorf("Filename(%q) = %q, want %q", header, got, want)
+		}
+	}
+}
+
+// closing is a body that remembers being closed.
+type closing struct {
+	io.Reader
+	closed bool
+}
+
+func (c *closing) Close() error { c.closed = true; return nil }
+
+// failing is a writer with no room.
+type failing struct{}
+
+func (failing) Write([]byte) (int, error) { return 0, errors.New("disk full") }

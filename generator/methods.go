@@ -91,8 +91,13 @@ func (g *gen) responseModel(o *definitions.Operation) (typ string, pointer bool)
 
 func (g *gen) writeResponse(b *strings.Builder, o *definitions.Operation, responseType string) {
 	fmt.Fprintf(b, "// %s is the result of %s.\n", responseType, o.Name)
-	if o.Response != nil && o.Response.Type.Type == definitions.RawFile {
-		fmt.Fprintf(b, "//\n// The operation answers %s, left unread in HttpResponse.Body, which\n// the caller must close.\n", o.Response.ContentType)
+	file := o.Response != nil && o.Response.Type.Type == definitions.RawFile
+	stream := file && o.Response.ContentType == eventStream
+	switch {
+	case stream:
+		fmt.Fprintf(b, "//\n// The operation answers %s, left open in HttpResponse.Body: Reader hands it\n// over for the caller to read event by event and close; it has no end to copy to.\n", o.Response.ContentType)
+	case file:
+		fmt.Fprintf(b, "//\n// The operation answers %s, left unread in HttpResponse.Body. WriteTo copies\n// it out and Bytes reads it whole up to a size, each closing it; Reader hands it over\n// for the caller to read and close. After any of them the body is spent. A failed call\n// has no open body: the base client reads a refusal and closes it.\n", o.Response.ContentType)
 	}
 	if o.Response.Text() {
 		fmt.Fprintf(b, "//\n// The operation answers text (%s), which Model holds as it was sent.\n", o.Response.ContentType)
@@ -102,7 +107,80 @@ func (g *gen) writeResponse(b *strings.Builder, o *definitions.Operation, respon
 		fmt.Fprintf(b, "\tModel %s\n", typ)
 	}
 	b.WriteString("}\n\n")
+	if file {
+		fmt.Fprintf(b, readerMethods, responseType)
+	}
+	if file && !stream {
+		fmt.Fprintf(b, copyMethods, responseType)
+	}
 }
+
+// eventStream is the content type of an operation that answers events as
+// they happen, which has no end to copy to.
+const eventStream = "text/event-stream"
+
+// readerMethods are the methods of every response that is a file: the body
+// handed over with its content type, and its length.
+const readerMethods = `// Reader is the file's body, for the caller to read and close, and the content
+// type the server named it; an empty body and "" when the operation gave no
+// answer, so a deferred Close is always safe. The body stays readable after
+// the result goes out of scope, and has no size or time limit of the client's:
+// the caller's context is the one bound on a slow read.
+func (r %[1]s) Reader() (io.ReadCloser, string) {
+	if r.HttpResponse == nil || r.HttpResponse.Body == nil {
+		return http.NoBody, ""
+	}
+
+	return r.HttpResponse.Body, r.HttpResponse.Header.Get("Content-Type")
+}
+
+// ContentLength is the file's length as the server named it, or -1 when it
+// did not, to refuse one too big before reading any of it.
+func (r %[1]s) ContentLength() int64 {
+	if r.HttpResponse == nil {
+		return -1
+	}
+
+	return r.HttpResponse.ContentLength
+}
+
+// Filename is the name the server gave the file (Content-Disposition), or ""
+// when it gave none, for a caller saving it under the server's name.
+func (r %[1]s) Filename() string {
+	if r.HttpResponse == nil {
+		return ""
+	}
+
+	return client.Filename(r.HttpResponse.Header)
+}
+
+`
+
+// copyMethods are the methods of a response that is a file with an end: a
+// copy out and a bounded read, each closing the body.
+const copyMethods = `// WriteTo copies the file to w and closes the body whatever happens, which is
+// the one way to take the answer that cannot leave it open. A writer that
+// failed is a client.WriteError, as against the server's side breaking off;
+// it fails when the operation gave no answer, and again once the body is spent.
+func (r %[1]s) WriteTo(w io.Writer) (int64, error) {
+	if r.HttpResponse == nil || r.HttpResponse.Body == nil {
+		return 0, errors.New("no answer to write")
+	}
+
+	return client.Copy(w, r.HttpResponse.Body)
+}
+
+// Bytes reads the file whole, up to max bytes, and closes the body: a file
+// over max is a client.TooLargeError rather than cut short without a word.
+func (r %[1]s) Bytes(max int64) ([]byte, error) {
+	if r.HttpResponse == nil || r.HttpResponse.Body == nil {
+		return nil, errors.New("no answer to read")
+	}
+
+	return client.ReadAtMost(r.HttpResponse.Body, max)
+}
+
+`
 
 // optionType is how the options struct holds an option: a pointer for a
 // boolean or a number, so false and 0 can be sent (a series' specials are

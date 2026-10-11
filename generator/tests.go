@@ -107,6 +107,10 @@ func newOperationServer(t *testing.T, status int, contentType, body string) (*Cl
 		if contentType != "" {
 			w.Header().Set("Content-Type", contentType)
 		}
+		if body == "file bytes" {
+			// a file is named, as a server names one it serves
+			w.Header().Set("Content-Disposition", "attachment; filename=\"answer.bin\"")
+		}
 		w.WriteHeader(status)
 		_, _ = io.WriteString(w, body)
 	}))
@@ -254,7 +258,7 @@ func (g *gen) testFile(o *definitions.Operation) string {
 		}
 	}
 	fmt.Fprintf(&b, "\tif result.HttpResponse == nil || result.HttpResponse.StatusCode != %d {\n\t\tt.Fatalf(\"HttpResponse = %%+v\", result.HttpResponse)\n\t}\n", status)
-	b.WriteString(g.responseChecks(o))
+	b.WriteString(g.responseChecks(o, call))
 
 	// a null result
 	if o.Response != nil && o.Response.Type.Type != definitions.RawFile && status != http.StatusNoContent && slices.Contains(o.ExpectedStatusCodes, http.StatusNoContent) {
@@ -586,13 +590,23 @@ func (g *gen) sampleJSON(t definitions.TypeRef) string {
 }
 
 // responseChecks checks what the operation decoded or streamed.
-func (g *gen) responseChecks(o *definitions.Operation) string {
+func (g *gen) responseChecks(o *definitions.Operation, call testCallInfo) string {
 	switch {
 	case o.Response == nil:
 		return ""
+	case o.Response.Type.Type == definitions.RawFile && o.Response.ContentType == eventStream:
+		return "\tbody, contentType := result.Reader()\n\tif contentType == \"\" || result.ContentLength() == 0 {\n\t\tt.Errorf(\"Reader = %q, length %d\", contentType, result.ContentLength())\n\t}\n" +
+			"\tstreamed, _ := io.ReadAll(body)\n\t_ = body.Close()\n\tif string(streamed) != \"file bytes\" {\n\t\tt.Errorf(\"streamed body = %q\", streamed)\n\t}\n"
 	case o.Response.Type.Type == definitions.RawFile:
-		return "\tstreamed, _ := io.ReadAll(result.HttpResponse.Body)\n\t_ = result.HttpResponse.Body.Close()\n" +
-			"\tif string(streamed) != \"file bytes\" {\n\t\tt.Errorf(\"streamed body = %q\", streamed)\n\t}\n"
+		return "\tif _, contentType := result.Reader(); contentType == \"\" || result.ContentLength() != 10 || result.Filename() != \"answer.bin\" {\n\t\tt.Errorf(\"Reader = %q, length %d, filename %q\", contentType, result.ContentLength(), result.Filename())\n\t}\n" +
+			"\tif data, err := result.Bytes(9); err == nil || string(data) != \"\" {\n\t\tt.Errorf(\"Bytes over the size = %q, %v\", data, err)\n\t}\n" +
+			"\tc, _ = newOperationServer(t, " + strconv.Itoa(o.ExpectedStatusCodes[0]) + ", " + strconv.Quote(concreteType(o.Response.ContentType)) + ", \"file bytes\")\n\tresult, err = " + call.expr + "\n\tif err != nil {\n\t\tt.Fatal(err)\n\t}\n" +
+			"\tif data, err := result.Bytes(10); err != nil || string(data) != \"file bytes\" {\n\t\tt.Errorf(\"Bytes = %q, %v\", data, err)\n\t}\n" +
+			"\tc, _ = newOperationServer(t, " + strconv.Itoa(o.ExpectedStatusCodes[0]) + ", " + strconv.Quote(concreteType(o.Response.ContentType)) + ", \"file bytes\")\n\tresult, err = " + call.expr + "\n\tif err != nil {\n\t\tt.Fatal(err)\n\t}\n" +
+			"\tvar streamed bytes.Buffer\n\tif _, err := result.WriteTo(&streamed); err != nil || streamed.String() != \"file bytes\" {\n\t\tt.Errorf(\"WriteTo = %v, %q\", err, streamed.String())\n\t}\n" +
+			"\tif _, err := result.WriteTo(&streamed); err == nil {\n\t\tt.Error(\"WriteTo on a spent body succeeded\")\n\t}\n" +
+			"\tif _, err := (" + g.typeName(o.Name+"OperationResponse") + "{}).WriteTo(&streamed); err == nil {\n\t\tt.Error(\"WriteTo with no answer succeeded\")\n\t}\n" +
+			"\tif body, contentType := (" + g.typeName(o.Name+"OperationResponse") + "{}).Reader(); body == nil || contentType != \"\" || body.Close() != nil {\n\t\tt.Error(\"Reader with no answer is not safely empty\")\n\t}\n"
 	}
 	typ, pointer := g.responseModel(o)
 	switch {

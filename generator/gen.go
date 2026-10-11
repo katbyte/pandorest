@@ -337,6 +337,7 @@ func (g *gen) fileHeader(body string) string {
 
 	var std, ext []string
 	for _, imp := range []struct{ path, use string }{
+		{"bytes", "bytes."},
 		{"context", "context."},
 		{"encoding/json", "json."},
 		{"errors", "errors."},
