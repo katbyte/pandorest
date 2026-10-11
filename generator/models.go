@@ -76,7 +76,8 @@ func (g *gen) constantsFile(grp *definitions.Group) string {
 		for _, v := range c.Values {
 			fmt.Fprintf(&b, "\t\tstring(%s),\n", v.Name)
 		}
-		b.WriteString("\t}\n}\n")
+		b.WriteString("\t}\n}\n\n")
+		fmt.Fprintf(&b, "// Known reports whether the value is one the document lists, or empty; a server may answer one it does not.\nfunc (v %s) Known() bool { return v == \"\" || slices.Contains(%s(), string(v)) }\n", c.Name, possible)
 	}
 
 	return g.fileHeader(b.String())

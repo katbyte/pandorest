@@ -503,8 +503,74 @@ type answer struct {
 	// whole, and undeclared the keys it has no field for, as Model.key
 	dropped    []string
 	undeclared []string
-	// unread are the dates no layout read, which the model kept as text
-	unread []string
+	// unread are the dates no layout read, which the model kept as text,
+	// and unknown the enum values the document does not list
+	unread  []string
+	unknown []string
+}
+
+// known is what a generated enum answers whether its value is listed by.
+type known interface{ Known() bool }
+
+// unknownValues walks a decoded model for enum values the document does not
+// list, naming each by its place in the model and by its path in the answer
+// as a workaround's In takes it: the JSON names, lists adding nothing.
+func unknownValues(v reflect.Value, at, path string, found []string) []string {
+	if !v.IsValid() {
+		return found
+	}
+	if v.CanInterface() {
+		if k, ok := reflect.TypeAssert[known](v); ok {
+			if !k.Known() {
+				found = append(found, fmt.Sprintf("%s = %q (%s, at %s)", at, v.String(), v.Type().Name(), path))
+			}
+
+			return found
+		}
+	}
+	switch v.Kind() {
+	case reflect.Pointer, reflect.Interface:
+		if !v.IsNil() {
+			found = unknownValues(v.Elem(), at, path, found)
+		}
+	case reflect.Struct:
+		for i := range v.NumField() {
+			f := v.Type().Field(i)
+			if f.IsExported() {
+				found = unknownValues(v.Field(i), at+"."+f.Name, pathJoin(path, jsonName(f)), found)
+			}
+		}
+	case reflect.Slice, reflect.Array:
+		for i := range v.Len() {
+			found = unknownValues(v.Index(i), fmt.Sprintf("%s[%d]", at, i), path, found)
+		}
+	case reflect.Map:
+		for _, k := range v.MapKeys() {
+			found = unknownValues(v.MapIndex(k), fmt.Sprintf("%s[%v]", at, k), path, found)
+		}
+	default:
+	}
+
+	return found
+}
+
+// jsonName is the name a field has on the wire.
+func jsonName(f reflect.StructField) string {
+	name, _, _ := strings.Cut(f.Tag.Get("json"), ",")
+	if name == "" {
+		return f.Name
+	}
+
+	return name
+}
+
+// pathJoin is path with name under it, the name alone at the top.
+func pathJoin(path, name string) string {
+	if path == "" {
+		return name
+	}
+
+	return path + "." + name
 }
 
 // unreadDate is what a generated Time or Day set to keep an unread date
@@ -679,6 +745,9 @@ func (s Sweep) check(out *Outcome, op *definitions.Operation, c Case, a answer) 
 	for _, u := range a.unread {
 		out.failf("%s answers a date no layout reads: %s; add the layout to the service's Dates or Days", op.Key(), u)
 	}
+	for _, u := range a.unknown {
+		out.failf("%s answers a value its enum does not list: %s; add it to the enum's values, or narrow the enum's In to leave the place out", op.Key(), u)
+	}
 }
 
 // judgeJSON reads a JSON answer against the model it was decoded into.
@@ -695,6 +764,7 @@ func judgeJSON(body []byte, model reflect.Value) answer {
 	}
 	a.dropped = dropped(sent, model, "the answer")
 	a.unread = unreadDates(model, "Model", nil)
+	a.unknown = unknownValues(model, "Model", "", nil)
 	if len(a.dropped) > maxDropped {
 		a.dropped = append(a.dropped[:maxDropped], fmt.Sprintf("%d more places", len(a.dropped)-maxDropped))
 	}

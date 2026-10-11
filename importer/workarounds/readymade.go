@@ -1,6 +1,7 @@
 package workarounds
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"maps"
@@ -463,7 +464,8 @@ func declare(about About, typ, format string, except map[string][]string, names 
 			return errors.New("it names no properties")
 		}
 		marked, declared, excluded := map[string]int{}, map[string]int{}, map[string]int{}
-		spec.EachSchema(func(where, property string, s *openapi.Schema) {
+		spec.EachSchema(func(where, path string, s *openapi.Schema) {
+			property := openapi.PathName(path)
 			if property == "" || s.Type != typ || !slices.Contains(names, property) {
 				return
 			}
@@ -493,6 +495,124 @@ func declare(about About, typ, format string, except map[string][]string, names 
 				if excluded[where+" "+name] == 0 {
 					return fmt.Errorf("%s has no %s called %s to leave alone", where, typ, name)
 				}
+			}
+		}
+
+		return nil
+	}}
+}
+
+// Enum is what UndeclaredEnums declares a property to be: its values, as the
+// server writes them, and the name of the type the package holds it as
+// (ContainerState), the property's own name capitalised when empty. In
+// narrows it to some places, for a name whose values differ by place; empty
+// is everywhere. A place is an operation ("GET /api/stacks") or a component
+// schema ("Container"), and may name a path inside it: "GET /api/stacks
+// .status" is the property at the top of the answer alone, "GET /api/stacks
+// containerDetails.status" the one at that path, with lists adding nothing
+// to a path, which is the form the sweep prints a value's place in.
+type Enum struct {
+	Name   string
+	Values []string
+	In     []string
+}
+
+// place is one entry of Enum.In, taken apart.
+type place struct {
+	where, path string
+	top         bool
+}
+
+// placeOf reads an entry of In: the place, then an optional path, ".status"
+// for one at the top.
+func placeOf(entry string) place {
+	entry = strings.TrimSpace(entry)
+	i := strings.LastIndexByte(entry, ' ')
+	if i < 0 || strings.HasPrefix(entry[i+1:], "/") {
+		return place{where: entry}
+	}
+	p := place{where: entry[:i], path: entry[i+1:]}
+	if strings.HasPrefix(p.path, ".") {
+		p.path, p.top = p.path[1:], true
+	}
+
+	return p
+}
+
+// matches reports whether a schema at where and path is in the place.
+func (p place) matches(where, path string) bool {
+	switch {
+	case p.where != where:
+		return false
+	case p.path == "":
+		return true
+	case p.top:
+		return path == p.path
+	default:
+		return path == p.path
+	}
+}
+
+// UndeclaredEnums is for the strings a document declares plain whose values
+// the server draws from a fixed set (Dockhand's state, protocol, mode), so
+// that the package holds them as a typed enum with its values as constants,
+// and the sweep fails an answer carrying a value the set does not list. It
+// adds a component schema for each enum and points every string property or
+// parameter of the name at it. It fails for a name nothing has, for an enum
+// with no values, and for a type name a different schema already has.
+func UndeclaredEnums(about About, enums map[string]Enum) Workaround {
+	return readyMade{about, func(spec *openapi.Spec) error {
+		if len(enums) == 0 {
+			return errors.New("it names no properties")
+		}
+		for _, property := range openapi.SortedKeys(enums) {
+			e := enums[property]
+			if len(e.Values) == 0 {
+				return fmt.Errorf("%s has no values", property)
+			}
+			name := e.Name
+			if name == "" {
+				name = strings.ToUpper(property[:1]) + property[1:]
+			}
+			values := make([]json.RawMessage, 0, len(e.Values))
+			for _, v := range e.Values {
+				values = append(values, json.RawMessage(strconv.Quote(v)))
+			}
+			if existing := spec.Components.Schemas[name]; existing != nil && !slices.Equal(existing.EnumValues(), e.Values) {
+				return fmt.Errorf("schema %s exists and is not this enum", name)
+			}
+			if spec.Components.Schemas == nil {
+				// a document that declares no schemas of its own (Dockhand's)
+				spec.Components.Schemas = map[string]*openapi.Schema{}
+			}
+			spec.Components.Schemas[name] = &openapi.Schema{Type: openapi.TypeString, Enum: values}
+
+			places := make([]place, 0, len(e.In))
+			for _, entry := range e.In {
+				places = append(places, placeOf(entry))
+			}
+			marked, markedIn := 0, make([]int, len(places))
+			spec.EachSchema(func(where, path string, s *openapi.Schema) {
+				if openapi.PathName(path) != property || s.Type != openapi.TypeString || s.Format != "" || s.IsEnum() {
+					return
+				}
+				if len(places) > 0 {
+					i := slices.IndexFunc(places, func(p place) bool { return p.matches(where, path) })
+					if i < 0 {
+						return
+					}
+					markedIn[i]++
+				}
+				*s = openapi.Schema{Ref: openapi.SchemaRefPrefix + name, Description: s.Description, Nullable: s.Nullable}
+				marked++
+			})
+			for i, n := range markedIn {
+				if n == 0 {
+					return fmt.Errorf("%s has no plain string called %s", e.In[i], property)
+				}
+			}
+			if marked == 0 {
+				return fmt.Errorf("no plain string property or parameter is called %s", property)
 			}
 		}
 

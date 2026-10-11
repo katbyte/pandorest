@@ -321,27 +321,28 @@ func SortedKeys[V any](m map[string]V) []string {
 }
 
 // EachSchema calls fn for every schema in the document: where is the operation it belongs to, as
-// "GET /path", or the component schema's name, and property the name it sits under, a property's or
-// a parameter's, or "" for one that is not named. It covers the component schemas, each operation's
-// parameters, request body and answers, and everything nested in them.
-func (s *Spec) EachSchema(fn func(where, property string, schema *Schema)) {
-	var walk func(where, property string, schema *Schema)
-	walk = func(where, property string, schema *Schema) {
+// "GET /path", or the component schema's name, and path where it sits, the property names down to
+// it joined by dots ("containerDetails.status"), a parameter's name, or "" for one that is not named.
+// A list adds nothing to the path: its items sit where it does. It covers the component schemas,
+// each operation's parameters, request body and answers, and everything nested in them.
+func (s *Spec) EachSchema(fn func(where, path string, schema *Schema)) {
+	var walk func(where, path string, schema *Schema)
+	walk = func(where, path string, schema *Schema) {
 		if schema == nil {
 			return
 		}
-		fn(where, property, schema)
+		fn(where, path, schema)
 		for _, name := range SortedKeys(schema.Properties) {
-			walk(where, name, schema.Properties[name])
+			walk(where, PathJoin(path, name), schema.Properties[name])
 		}
-		walk(where, "", schema.Items)
+		walk(where, path, schema.Items)
 		for _, list := range [][]*Schema{schema.AllOf, schema.OneOf, schema.AnyOf} {
 			for _, nested := range list {
-				walk(where, "", nested)
+				walk(where, path, nested)
 			}
 		}
 		if additional, ok := schema.Additional(); ok {
-			walk(where, "", additional)
+			walk(where, path, additional)
 		}
 	}
 	for _, name := range SortedKeys(s.Components.Schemas) {
@@ -369,4 +370,22 @@ func (s *Spec) EachSchema(fn func(where, property string, schema *Schema)) {
 			}
 		}
 	}
+}
+
+// PathJoin is path with name under it: the name alone at the top.
+func PathJoin(path, name string) string {
+	if path == "" {
+		return name
+	}
+
+	return path + "." + name
+}
+
+// PathName is the last name of a path: the property's own.
+func PathName(path string) string {
+	if _, name, ok := strings.CutLast(path, "."); ok {
+		return name
+	}
+
+	return path
 }

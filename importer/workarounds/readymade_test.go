@@ -2,6 +2,7 @@ package workarounds_test
 
 import (
 	"net/http"
+	"slices"
 	"strings"
 	"testing"
 
@@ -27,7 +28,7 @@ const buggy = `{"openapi": "3.0.1", "info": {"title": "Buggy", "version": "1"}, 
   "/Path": {"get": {"operationId": "GetPath", "tags": ["System"], "responses": {"200": {"content": {"application/json": {"schema": {"type": "string"}}}}}}},
   "/Ping": {"get": {"operationId": "Ping", "tags": ["System"], "responses": {"200": {}}}},
   "/Version": {"get": {"operationId": "GetVersion", "tags": ["System"], "responses": {"200": {"content": {"text/plain": {"schema": {"type": "string"}}}}}}}},
-  "components": {"schemas": {"Thing": {"type": "object", "properties": {"id": {"type": "integer"}, "createdAt": {"type": "string"}, "seenAt": {"type": "string", "format": "date-time"}, "born": {"type": "string"}, "stamp": {"type": "integer"}}},
+  "components": {"schemas": {"Thing": {"type": "object", "properties": {"id": {"type": "integer"}, "createdAt": {"type": "string"}, "seenAt": {"type": "string", "format": "date-time"}, "born": {"type": "string"}, "stamp": {"type": "integer"}, "status": {"type": "string"}, "details": {"type": "object", "properties": {"status": {"type": "string"}}}}},
     "Note": {"type": "object", "properties": {"createdAt": {"type": "string"}}}}}}`
 
 func loadBuggy(string) (*openapi.Spec, error) { return openapi.Parse([]byte(buggy)) }
@@ -62,6 +63,7 @@ func readyMade() []workarounds.Workaround {
 		}),
 		workarounds.UndeclaredDatesExcept(about("thing-dates", "a thing's createdAt is declared a plain string; the server writes a date-time, but a note's createdAt is who wrote it"), map[string][]string{"Note": {"createdAt"}}, "createdAt"),
 		workarounds.UndeclaredUnixDates(about("thing-stamp", "a thing's stamp is declared an integer; the server writes seconds since 1970"), "seconds", "stamp"),
+		workarounds.UndeclaredEnums(about("thing-status", "a thing's status is declared a plain string; the server writes one of three, where its details' status is free text"), map[string]workarounds.Enum{"status": {Name: "ThingStatus", Values: []string{"new", "done", "gone"}, In: []string{"Thing .status"}}}),
 		workarounds.UndeclaredDays(about("thing-days", "a thing's born is declared a plain string; the server writes a day"), "born"),
 	}
 }
@@ -80,7 +82,7 @@ func TestReadyMade(t *testing.T) {
 		t.Fatal(err)
 	}
 	applied, err := workarounds.Apply(readyMade(), "buggy", spec, nil)
-	if err != nil || len(applied) != 9 || applied[0] != "buggy-ui-routes" {
+	if err != nil || len(applied) != 10 || applied[0] != "buggy-ui-routes" {
 		t.Fatalf("Apply = %v, %v", applied, err)
 	}
 	if thing := spec.Components.Schemas["Thing"].Properties; thing["createdAt"].Format != "date-time" || thing["born"].Format != "date" || thing["seenAt"].Format != "date-time" || thing["stamp"].Format != openapi.FormatUnixSeconds {
@@ -102,6 +104,12 @@ func TestReadyMade(t *testing.T) {
 	}
 	if s := answer("GET", "/Things", "200")["application/json"].Schema; s.Type != openapi.TypeArray || s.Items.RefName() != "Thing" {
 		t.Errorf("GET /Things answers %+v, want a list of Thing", s)
+	}
+	if status := spec.Components.Schemas["ThingStatus"]; status == nil || !slices.Equal(status.EnumValues(), []string{"new", "done", "gone"}) || spec.Components.Schemas["Thing"].Properties["status"].RefName() != "ThingStatus" {
+		t.Errorf("the enum is not declared: %+v, status %+v", status, spec.Components.Schemas["Thing"].Properties["status"])
+	}
+	if nested := spec.Components.Schemas["Thing"].Properties["details"].Properties["status"]; nested.RefName() != "" || nested.Type != openapi.TypeString {
+		t.Errorf("the details' status, outside In, was declared the enum: %+v", nested)
 	}
 	if note := spec.Components.Schemas["Note"].Properties; note["createdAt"].Format != "" {
 		t.Errorf("the excepted createdAt was declared a date: %q", note["createdAt"].Format)
@@ -176,6 +184,11 @@ func TestReadyMadeFailures(t *testing.T) {
 		{"an exception that excludes nothing", workarounds.UndeclaredDatesExcept(a, map[string][]string{"GET /Things": {"createdAt"}}, "createdAt"), "GET /Things has no string called createdAt to leave alone"},
 		{"an epoch no integer property is called", workarounds.UndeclaredUnixDates(a, "seconds", "createdAt"), "no integer property or parameter is called createdAt"},
 		{"an epoch in no known unit", workarounds.UndeclaredUnixDates(a, "minutes", "stamp"), `unit "minutes" is not seconds or milliseconds`},
+		{"an enum no string property is called", workarounds.UndeclaredEnums(a, map[string]workarounds.Enum{"mode": {Values: []string{"a"}}}), "no plain string property or parameter is called mode"},
+		{"an enum with no values", workarounds.UndeclaredEnums(a, map[string]workarounds.Enum{"status": {}}), "status has no values"},
+		{"an enum named for another schema", workarounds.UndeclaredEnums(a, map[string]workarounds.Enum{"status": {Name: "Thing", Values: []string{"a"}}}), "schema Thing exists and is not this enum"},
+		{"an enum in a place that has none", workarounds.UndeclaredEnums(a, map[string]workarounds.Enum{"status": {Values: []string{"a"}, In: []string{"Thing nothing.status"}}}), "Thing nothing.status has no plain string called status"},
+		{"no enums", workarounds.UndeclaredEnums(a, nil), "it names no properties"},
 		{"a date that is declared", workarounds.UndeclaredDates(a, "seenAt"), "every seenAt is declared a date-time now"},
 		{"no dates", workarounds.UndeclaredDates(a), "it names no properties"},
 
@@ -208,5 +221,38 @@ func TestAbout(t *testing.T) {
 	w := workarounds.NotAPI(workarounds.About{Name: "buggy-ui-routes", Service: "buggy", Bug: "the page"}, "/")
 	if w.Name() != "buggy-ui-routes" || w.Service() != "buggy" || w.Bug() != "the page" {
 		t.Errorf("a ready-made workaround = %s, %s, %s", w.Name(), w.Service(), w.Bug())
+	}
+}
+
+// A document that declares no component schemas of its own (Dockhand's) can
+// still have enums declared into it, at a path inside an inline answer.
+func TestUndeclaredEnumsWithoutSchemas(t *testing.T) {
+	t.Parallel()
+
+	spec, err := openapi.Parse([]byte(`{"openapi": "3.0.1", "info": {"title": "Bare", "version": "1"}, "paths": {
+    "/stacks": {"get": {"operationId": "GetStacks", "responses": {"200": {"content": {"application/json": {"schema": {"type": "array", "items": {"type": "object", "properties": {
+      "status": {"type": "string"}, "containerDetails": {"type": "array", "items": {"type": "object", "properties": {"status": {"type": "string"}}}}}}}}}}}}}}}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	w := workarounds.UndeclaredEnums(workarounds.About{Name: "bare-stack-status", Service: "bare", Bug: "a stack's status is one of three; a container's is free text"}, map[string]workarounds.Enum{"status": {Name: "StackStatus", Values: []string{"running", "stopped", "partial"}, In: []string{"GET /stacks .status"}}})
+	if err := w.Apply(spec); err != nil {
+		t.Fatal(err)
+	}
+	rows := spec.Paths["/stacks"].Get.Responses["200"].Content["application/json"].Schema.Items.Properties
+	if rows["status"].RefName() != "StackStatus" || rows["containerDetails"].Items.Properties["status"].RefName() != "" {
+		t.Errorf("the top status %+v, the nested %+v", rows["status"], rows["containerDetails"].Items.Properties["status"])
+	}
+
+	spec, _ = openapi.Parse([]byte(`{"openapi": "3.0.1", "info": {"title": "Bare", "version": "1"}, "paths": {
+    "/stacks": {"get": {"operationId": "GetStacks", "responses": {"200": {"content": {"application/json": {"schema": {"type": "array", "items": {"type": "object", "properties": {
+      "status": {"type": "string"}, "containerDetails": {"type": "array", "items": {"type": "object", "properties": {"status": {"type": "string"}}}}}}}}}}}}}}}`))
+	deep := workarounds.UndeclaredEnums(workarounds.About{Name: "bare-container-status", Service: "bare", Bug: "the containers' status"}, map[string]workarounds.Enum{"status": {Name: "ContainerStatus", Values: []string{"up"}, In: []string{"GET /stacks containerDetails.status"}}})
+	if err := deep.Apply(spec); err != nil {
+		t.Fatal(err)
+	}
+	rows = spec.Paths["/stacks"].Get.Responses["200"].Content["application/json"].Schema.Items.Properties
+	if rows["status"].RefName() != "" || rows["containerDetails"].Items.Properties["status"].RefName() != "ContainerStatus" {
+		t.Errorf("by path: the top status %+v, the nested %+v", rows["status"], rows["containerDetails"].Items.Properties["status"])
 	}
 }

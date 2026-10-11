@@ -24,7 +24,13 @@ type item struct {
 	ID   string `json:"Id,omitempty"`
 	Name string `json:"Name,omitempty"`
 	Seen stamp  `json:"Seen,omitzero"`
+	Kind kind   `json:"Kind,omitempty"`
 }
+
+// kind is an enum in the shape of a generated one.
+type kind string
+
+func (k kind) Known() bool { return k == "" || k == "movie" || k == "show" }
 
 type page struct {
 	Items []item `json:"Items,omitzero"`
@@ -591,6 +597,22 @@ func TestUnreadDate(t *testing.T) {
 	s, _ := newSweep(t, replies)
 	if out := s.Operation(t.Context(), operation(t, s, "GetItem")); len(out.Failures) != 1 || !strings.Contains(out.Failures[0], `GET /items/{id} answers a date no layout reads: Model.Seen = "04/03/2024"; add the layout to the service's Dates or Days`) {
 		t.Errorf("an unread date = %q", out.Failures)
+	}
+}
+
+// A value an enum does not list fails the operation, naming the value, the
+// field and the enum.
+func TestUnknownValue(t *testing.T) {
+	t.Parallel()
+
+	replies := maps.Clone(served)
+	replies["/items/a"] = struct {
+		status int
+		body   string
+	}{http.StatusOK, `{"Id": "a", "Name": "one", "Kind": "song"}`}
+	s, _ := newSweep(t, replies)
+	if out := s.Operation(t.Context(), operation(t, s, "GetItem")); len(out.Failures) != 1 || !strings.Contains(out.Failures[0], `GET /items/{id} answers a value its enum does not list: Model.Kind = "song" (kind, at Kind); add it to the enum's values, or narrow the enum's In to leave the place out`) {
+		t.Errorf("an unknown value = %q", out.Failures)
 	}
 }
 
