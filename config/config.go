@@ -139,6 +139,20 @@ type Service struct {
 	// refusing an empty token and an address with no scheme, and to leaving
 	// the slash off the end of the address it keeps.
 	Client string
+	// Grouped lays the SDK out as packages, the way go-azure-sdk lays out a
+	// service: the package at Output holds every model, enum, options and
+	// response type, which is all a caller names; each tag's operations are
+	// a package under it, with a Client of their own; and Output/client
+	// holds New and a Client with a field for each tag. Off, the SDK is one
+	// package of every file. Packages names a tag's package where its
+	// lowercased name will not do (a Go keyword, a standard library
+	// package, client, the SDK's own name): "Package": "packages". A tag
+	// it names that the document lacks fails the import. Module is the
+	// repository's module path, which Output's import path is under and the
+	// packages import one another by; left empty it is read from go.mod.
+	Grouped  bool
+	Packages map[string]string
+	Module   string
 	// Notes is a paragraph added to the generated package's documentation,
 	// for what is true of the service's every operation and no document
 	// says: how it writes its dates, say.
@@ -179,6 +193,15 @@ type Service struct {
 	// left out when empty. Each must be a string, or a number the document
 	// declares nullable, or the import fails naming it.
 	KeepNull []string
+	// InlineSingleOptions has an operation with one query or header
+	// parameter take it as an argument in place of the options struct:
+	// GetMovieLookup(ctx, term), or GetMovieLookup(ctx) to send nothing,
+	// since an optional one is variadic and a required one plain; a boolean
+	// or a number given is sent, false and 0 included, and a list is given
+	// as its elements. An operation with more keeps the struct, as does a
+	// list that pages, and a document that adds a second parameter changes
+	// the operation's shape at the next generation.
+	InlineSingleOptions bool
 
 	// Version, Spec and Definitions are set by Resolve: the document's
 	// version, the vendored OpenAPI document, and where the importer writes

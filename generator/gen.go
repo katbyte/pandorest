@@ -1,14 +1,15 @@
 package generator
 
 import (
-	"cmp"
 	"errors"
 	"fmt"
 	"go/ast"
 	"go/parser"
 	"go/token"
+	"path"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"unicode"
 	"unicode/utf8"
@@ -26,10 +27,25 @@ type gen struct {
 	// page; nil for a service with none
 	paged *definitions.Operation
 
-	// declared maps each package-level identifier to what declared it
+	// declared maps each package-level identifier to what declared it, in
+	// the package being rendered (pkg); clashes are collected across them
 	declared map[string]string
 	clashes  []string
+
+	// the grouped layout: pkg is the package being rendered, qual the
+	// qualifier its references to the types package carry ("emby." in a
+	// group, "" in the types package itself), pkgs each group's package
+	// name, and imports what the file being rendered imports beyond what
+	// its body shows
+	pkg     string
+	qual    string
+	pkgs    map[string]string
+	imports []importSpec
 }
+
+// importSpec is one import a generated file needs: a path, and the name it
+// is referred to by when that is not the path's last element.
+type importSpec struct{ path, alias string }
 
 func newGen(svc *definitions.Service, opts Options) (*gen, error) {
 	if svc.Package == "" || !isIdent(svc.Package) {
@@ -45,6 +61,12 @@ func newGen(svc *definitions.Service, opts Options) (*gen, error) {
 		models:    svc.Models(),
 		constants: svc.Constants(),
 		declared:  map[string]string{},
+		pkg:       svc.Package,
+	}
+	if opts.Grouped {
+		if err := g.groupPackages(); err != nil {
+			return nil, err
+		}
 	}
 	for _, o := range svc.Operations() {
 		if o.Pageable != nil {
@@ -56,6 +78,9 @@ func newGen(svc *definitions.Service, opts Options) (*gen, error) {
 	if opts.Client != "" && (opts.Credential != "" || opts.NewDoc != "") {
 		return nil, fmt.Errorf("%s: its config words the default client.go's New (Credential, NewDoc) and gives a Client of its own as well, which has its own words: drop one or the other", svc.Name)
 	}
+	if opts.Client != "" && opts.Grouped {
+		return nil, fmt.Errorf("%s: a Client of the service's own is for the flat layout; grouped, the constructor is generated, and an authorizer declared beside the generated files is named in Auth by its lowercase name", svc.Name)
+	}
 	if opts.Client == "" {
 		// New's parameter must be a name, and not one New already uses
 		if argument := credentialArgument(opts.Credential); opts.Credential != "" && (!isIdent(argument) || token.IsKeyword(argument) || slices.Contains([]string{"baseURL", "opts", "c", "err", "client", "errors"}, argument)) {
@@ -65,7 +90,11 @@ func newGen(svc *definitions.Service, opts Options) (*gen, error) {
 			return nil, fmt.Errorf("%s: NewDoc must document New, and start with its name: %q", svc.Name, opts.NewDoc)
 		}
 		if !isIdent(svc.Auth) {
-			return nil, fmt.Errorf("%s: Auth %q is not the name of an authorizer of %s, which the default client.go needs; name one, or give the service a Client of its own", svc.Name, svc.Auth, opts.ClientImport)
+			return nil, fmt.Errorf("%s: Auth %q is not the name of an authorizer of %s, or of one declared beside the generated files, which the default client.go needs; name one, or give the service a Client of its own", svc.Name, svc.Auth, opts.ClientImport)
+		}
+		if localAuth(svc.Auth) {
+			// declared by hand beside the generated files, and not to be declared again
+			g.declare(svc.Auth, "the service's own file")
 		}
 		if opts.ClientService != "" && !isIdent(opts.ClientService) {
 			return nil, fmt.Errorf("%s: ClientService %q is not the name of a value in the package", svc.Name, opts.ClientService)
@@ -143,14 +172,50 @@ func declarations(src string) ([]string, error) {
 	return names, nil
 }
 
-// declare records a package-level identifier.
+// declare records a package-level identifier of the package being rendered.
 func (g *gen) declare(name, by string) {
 	if prev, ok := g.declared[name]; ok {
-		g.clashes = append(g.clashes, fmt.Sprintf("%s is declared by both %s and %s", name, prev, by))
+		where := ""
+		if g.opts.Grouped {
+			where = "package " + g.pkg + ": "
+		}
+		g.clashes = append(g.clashes, fmt.Sprintf("%s%s is declared by both %s and %s", where, name, prev, by))
 		return
 	}
 	g.declared[name] = by
 }
+
+// localAuth reports whether Auth names an authorizer declared beside the
+// generated files rather than one of the base client's: by its lowercase
+// name, which an exported one of the base client's cannot have.
+func localAuth(auth string) bool {
+	first, _ := utf8.DecodeRuneInString(auth)
+
+	return unicode.IsLower(first)
+}
+
+// authorizerExpr is the expression that wraps the credential in the
+// service's authorizer: the base client's, or the package's own.
+func authorizerExpr(auth, credential string) string {
+	if localAuth(auth) {
+		return auth + "(" + credential + ")"
+	}
+
+	return "client." + auth + "(" + credential + ")"
+}
+
+// cmpOr is the first of two strings that is not empty.
+func cmpOr(a, b string) string {
+	if a != "" {
+		return a
+	}
+
+	return b
+}
+
+// typeName is how a name declared in the types package is written in the
+// package being rendered.
+func (g *gen) typeName(name string) string { return g.qual + name }
 
 func (g *gen) checkIdentifiers() error {
 	if len(g.clashes) == 0 {
@@ -195,7 +260,7 @@ func (g *gen) goType(t definitions.TypeRef) string {
 	case definitions.Dictionary:
 		return "map[string]" + g.goType(*t.NestedItem)
 	case definitions.Reference:
-		return t.ReferenceName
+		return g.typeName(t.ReferenceName)
 	}
 
 	return "any"
@@ -205,7 +270,7 @@ func (g *gen) goType(t definitions.TypeRef) string {
 // pointer, anything else as goType has it.
 func (g *gen) heldType(t definitions.TypeRef) string {
 	if t.Type == definitions.Reference && g.isStruct(t.ReferenceName) {
-		return "*" + t.ReferenceName
+		return "*" + g.typeName(t.ReferenceName)
 	}
 
 	return g.goType(t)
@@ -258,7 +323,7 @@ func (g *gen) fileHeader(body string) string {
 	var b strings.Builder
 	b.WriteString(Header)
 	b.WriteString("\n")
-	fmt.Fprintf(&b, "package %s\n\n", g.svc.Package)
+	fmt.Fprintf(&b, "package %s\n\n", g.pkg)
 
 	var std, ext []string
 	for _, imp := range []struct{ path, use string }{
@@ -280,12 +345,22 @@ func (g *gen) fileHeader(body string) string {
 		}
 	}
 	if usesPackage(body, "client.") {
-		ext = append(ext, g.opts.ClientImport)
+		ext = append(ext, strconv.Quote(g.opts.ClientImport))
+	}
+	if g.qual != "" && usesPackage(body, g.qual) {
+		ext = append(ext, g.rootImport().String())
+	}
+	for _, imp := range g.imports {
+		ext = append(ext, imp.String())
 	}
 	switch len(std) + len(ext) {
 	case 0:
 	case 1:
-		fmt.Fprintf(&b, "import %q\n\n", append(std, ext...)[0])
+		if len(std) == 1 {
+			fmt.Fprintf(&b, "import %q\n\n", std[0])
+		} else {
+			fmt.Fprintf(&b, "import %s\n\n", ext[0])
+		}
 	default:
 		b.WriteString("import (\n")
 		for _, p := range std {
@@ -295,13 +370,32 @@ func (g *gen) fileHeader(body string) string {
 			b.WriteString("\n")
 		}
 		for _, p := range ext {
-			fmt.Fprintf(&b, "\t%q\n", p)
+			fmt.Fprintf(&b, "\t%s\n", p)
 		}
 		b.WriteString(")\n\n")
 	}
 	b.WriteString(body)
 
 	return b.String()
+}
+
+// String renders the import as it is written in an import block.
+func (i importSpec) String() string {
+	if i.alias != "" && i.alias != path.Base(i.path) {
+		return i.alias + " " + strconv.Quote(i.path)
+	}
+
+	return strconv.Quote(i.path)
+}
+
+// rootImport is how a group imports the types package: Dir's import path,
+// or the package under it when Dir is not named for it (see grouped.go).
+func (g *gen) rootImport() importSpec {
+	if filepath.Base(g.opts.Dir) == g.svc.Package {
+		return importSpec{g.opts.ImportPath, g.svc.Package}
+	}
+
+	return importSpec{path.Join(g.opts.ImportPath, g.svc.Package), g.svc.Package}
 }
 
 // usesPackage reports whether code refers to a package selector such as
@@ -406,7 +500,7 @@ const DocumentVersion = %q
 // Client type, and a New that wraps its credential in the base client's
 // authorizer the service's Auth names and makes the client the service's own
 // way where it says what that is. Its arguments: the document's title, the
-// authorizer, what makes the client (the package's client.Service, or the
+// credential wrapped in the authorizer, what makes the client (the package's client.Service, or the
 // base client itself), New's documentation, its parameter for the credential
 // and its refusal of an empty one.
 const defaultClient = `// Client is a client for %[1]s; each of its operations is a method.
@@ -419,7 +513,7 @@ type Client struct {
 	if %[5]s == "" {
 		return nil, errors.New(%[6]q)
 	}
-	c, err := %[3]s.New(baseURL, client.%[2]s(%[5]s), opts...)
+	c, err := %[3]s.New(baseURL, %[2]s, opts...)
 	if err != nil {
 		return nil, err
 	}
@@ -444,16 +538,22 @@ func (g *gen) clientFile() string {
 	if g.opts.Credential != "" {
 		argument, refusal = credentialArgument(g.opts.Credential), g.opts.Credential+" is required"
 	}
-	doc := cmp.Or(g.opts.NewDoc, fmt.Sprintf(defaultNewDoc, g.svc.Title, argument))
+	doc := cmpOr(g.opts.NewDoc, fmt.Sprintf(defaultNewDoc, g.svc.Title, argument))
 
-	return g.fileHeader(g.apiVersionConsts() + fmt.Sprintf(defaultClient, g.svc.Title, g.svc.Auth, cmp.Or(g.opts.ClientService, "client"), comment("", doc), argument, refusal))
+	return g.fileHeader(g.apiVersionConsts() + fmt.Sprintf(defaultClient, g.svc.Title, authorizerExpr(g.svc.Auth, argument), cmpOr(g.opts.ClientService, "client"), comment("", doc), argument, refusal))
 }
 
 // credentialArgument is the name of New's parameter for a credential the
 // service calls by a name of its own: "API key" is apiKey.
 func credentialArgument(credential string) string {
+	words := strings.FieldsFunc(credential, func(r rune) bool { return !isIdentRune(r) || r == '_' })
+	if len(words) > 2 {
+		// a phrase ("TMDB read access token or API key") is for the doc, not for an argument name
+		return "credential"
+	}
+
 	var b strings.Builder
-	for i, word := range strings.FieldsFunc(credential, func(r rune) bool { return !isIdentRune(r) || r == '_' }) {
+	for i, word := range words {
 		if i == 0 {
 			b.WriteString(strings.ToLower(word))
 			continue
@@ -475,21 +575,33 @@ func (g *gen) docFile() string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "// Package %s is a typed client for %s %s, generated by pandorest\n", g.svc.Package, g.svc.Title, g.svc.APIVersion)
 	fmt.Fprintf(&b, "// from the definitions in %s, which were imported from %s.\n", filepath.ToSlash(g.opts.Definitions), g.svc.Source)
-	fmt.Fprintf(&b, `//
-// # Layout
+	b.WriteString("//\n// # Layout\n//\n")
+	if g.opts.Grouped {
+		fmt.Fprintf(&b, `// This package holds every model (model_<model>.go), every enum
+// (constants_<tag>.go) and every operation's options and response types
+// (operation_<operation>.go), so that a caller names them all as %[1]s.X. The
+// operations are methods on the Client of their tag's package, one package
+// per tag beside this one, and %[2]s/client holds New and a Client with a
+// field for each. A caller imports this package and client, and never a
+// tag's. The requests go through the hand-written base client,
+// %[3]s.
 //
-// Every operation of the API is a method on Client, in a file of its own named
+`, g.svc.Package, path.Base(g.opts.ImportPath), g.opts.ClientImport)
+	} else {
+		fmt.Fprintf(&b, `// Every operation of the API is a method on Client, in a file of its own named
 // <tag>_method_<operation>.go. Each model is in <tag>_model_<model>.go and each
 // tag's enums in <tag>_constants.go; a model or enum more than one tag uses is
 // under common_. The requests go through the hand-written base client,
 // %s.
 //
-// # Calls
+`, g.opts.ClientImport)
+	}
+	b.WriteString(`// # Calls
 //
 // A method takes a context, then the path parameters in path order, then the
 // request body (input: the model for a JSON body, or an io.Reader and its
 // content type for raw bytes), then, when the operation has query or header
-// parameters, a <Name>OperationOptions. Unset options are not sent: a
+// parameters, a <Name>Options. Unset options are not sent: a
 // boolean or a number is a pointer, sent when set (so 0 and false can be
 // asked for), an empty string or list is skipped, and a list is sent
 // comma-joined or as one parameter for each element, as the document says.
@@ -501,7 +613,7 @@ func (g *gen) docFile() string {
 // HttpResponse.Body for the caller to read and close. A status the operation
 // does not document is an error, and client.StatusCode reads the status from
 // it.
-`, g.opts.ClientImport)
+`)
 	if g.paged != nil {
 		fmt.Fprintf(&b, "//\n// A list operation, one whose options page with %s and %s, also has a\n// <Name>Complete method that pages through every result.\n", g.paged.Pageable.StartIndexOption, g.paged.Pageable.LimitOption)
 	}

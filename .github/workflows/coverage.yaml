@@ -10,7 +10,7 @@ on:
       - 'go.mod'
       - 'go.sum'
       - 'makefile'
-      - 'scripts/publish-coverage-badge.sh'
+      - '.scripts/publish-coverage-badge.sh'
       - '.github/workflows/coverage.yaml'
   workflow_dispatch:
 
@@ -55,4 +55,4 @@ jobs:
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         env:
           PCT: ${{ steps.cov.outputs.pct }}
-        run: bash ./scripts/publish-coverage-badge.sh
+        run: bash ./.scripts/publish-coverage-badge.sh

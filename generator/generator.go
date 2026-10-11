@@ -11,7 +11,7 @@
 //	doc.go                             the package documentation
 //	<tag>_method_<operation>.go        one per operation: the method, its
 //	                                   <Name>OperationResponse, its
-//	                                   <Name>OperationOptions, and for list
+//	                                   <Name>Options, and for list
 //	                                   operations a <Name>Complete pager
 //	<tag>_method_<operation>_test.go   the operation's test (tests.go)
 //	<tag>_model_<model>.go             one per model
@@ -81,10 +81,25 @@ type Options struct {
 	NewDoc     string
 	// Notes is a paragraph added to the package documentation.
 	Notes string
+
+	// Grouped lays the SDK out as packages (see config.Service.Grouped):
+	// the types in Dir, a package per tag under it, and client. ImportPath
+	// is then Dir's import path, which the packages import one another by,
+	// and Packages names a tag's package where its lowercased name will not
+	// do.
+	Grouped    bool
+	ImportPath string
+	Packages   map[string]string
+
+	// InlineSingleOptions has an operation with one option take it as an
+	// argument in place of the struct (see config.Service).
+	InlineSingleOptions bool
 }
 
 // Generate writes the package and removes generated files it no longer
-// produces. It returns the number of files written.
+// produces. It returns the number of files written. A hand-written Go file
+// where a generated one goes (a doc.go moved beside the types, say) is
+// refused rather than overwritten.
 func Generate(svc *definitions.Service, opts Options) (int, error) {
 	files, err := Render(svc, opts)
 	if err != nil {
@@ -93,13 +108,20 @@ func Generate(svc *definitions.Service, opts Options) (int, error) {
 	if err := os.MkdirAll(opts.Dir, 0o755); err != nil { //nolint:gosec // generated source, world-readable is right
 		return 0, err
 	}
-	if err := removeStale(opts.Dir, files); err != nil {
+	if err := removeStale(opts.Dir, files, opts.Grouped); err != nil {
 		return 0, err
 	}
 	for _, name := range sortedKeys(files) {
-		path := filepath.Join(opts.Dir, name)
-		if old, err := os.ReadFile(path); err == nil && bytes.Equal(old, files[name]) { //nolint:gosec // a file in the package directory
+		path := filepath.Join(opts.Dir, filepath.FromSlash(name))
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil { //nolint:gosec // generated source, world-readable is right
+			return 0, err
+		}
+		old, err := os.ReadFile(path) //nolint:gosec // a file in the package directory
+		switch {
+		case err == nil && bytes.Equal(old, files[name]):
 			continue
+		case err == nil && filepath.Ext(name) == ".go" && !Generated(old):
+			return 0, fmt.Errorf("%s is written by hand, and generation would overwrite it: move it aside, or give it another name", path)
 		}
 		if err := os.WriteFile(path, files[name], 0o644); err != nil { //nolint:gosec // generated source, world-readable is right
 			return 0, err
@@ -109,7 +131,8 @@ func Generate(svc *definitions.Service, opts Options) (int, error) {
 	return len(files), nil
 }
 
-// Render produces every file of the package, formatted, by name.
+// Render produces every file of the package, formatted, by name: a path
+// under Dir with slashes, for the grouped layout.
 func Render(svc *definitions.Service, opts Options) (map[string][]byte, error) {
 	if err := definitions.Validate(svc); err != nil {
 		return nil, err
@@ -119,11 +142,7 @@ func Render(svc *definitions.Service, opts Options) (map[string][]byte, error) {
 		return nil, err
 	}
 
-	sources := map[string]string{
-		"client.go":      g.clientFile(),
-		"client_test.go": g.testHelpersFile(),
-		"doc.go":         g.docFile(),
-	}
+	sources := map[string]string{}
 	add := func(name, src string) error {
 		if _, ok := sources[name]; ok {
 			return fmt.Errorf("two declarations would both be written to %s", name)
@@ -131,6 +150,17 @@ func Render(svc *definitions.Service, opts Options) (map[string][]byte, error) {
 		sources[name] = src
 		return nil
 	}
+	if opts.Grouped {
+		if err := g.renderGrouped(add); err != nil {
+			return nil, err
+		}
+
+		return g.format(sources)
+	}
+
+	sources["client.go"] = g.clientFile()
+	sources["client_test.go"] = g.testHelpersFile()
+	sources["doc.go"] = g.docFile()
 	for gi := range svc.Groups {
 		grp := &svc.Groups[gi]
 		prefix := fileStem(grp.Name)
@@ -156,12 +186,23 @@ func Render(svc *definitions.Service, opts Options) (map[string][]byte, error) {
 			}
 		}
 	}
+	return g.format(sources)
+}
+
+// format checks the identifiers and gofmts every Go source; a file that is
+// not Go (the groups map) goes as it is.
+func (g *gen) format(sources map[string]string) (map[string][]byte, error) {
 	if err := g.checkIdentifiers(); err != nil {
 		return nil, err
 	}
 
 	files := make(map[string][]byte, len(sources))
 	for name, src := range sources {
+		if filepath.Ext(name) != ".go" {
+			files[name] = []byte(src)
+
+			continue
+		}
 		out, err := format.Source([]byte(src))
 		if err != nil {
 			return nil, fmt.Errorf("%s: generated code does not parse: %w\n%s", name, err, numbered(src))
@@ -173,25 +214,49 @@ func Render(svc *definitions.Service, opts Options) (map[string][]byte, error) {
 }
 
 // removeStale deletes generated Go files, tests included, in dir that are not
-// about to be written. Hand-written files (no generated header) are left
-// alone.
-func removeStale(dir string, keep map[string][]byte) error {
-	entries, err := os.ReadDir(dir)
-	if err != nil {
-		return err
-	}
-	for _, e := range entries {
-		name := e.Name()
-		if e.IsDir() || filepath.Ext(name) != ".go" || keep[name] != nil {
-			continue
+// about to be written, and, for the grouped layout, in the packages under
+// it, removing a package directory left empty. Hand-written files (no
+// generated header) are left alone, wherever they are.
+func removeStale(dir string, keep map[string][]byte, grouped bool) error {
+	var dirs []string
+	if err := filepath.WalkDir(dir, func(path string, e os.DirEntry, err error) error {
+		if err != nil {
+			return err
 		}
-		path := filepath.Join(dir, name)
-		src, err := os.ReadFile(path) //nolint:gosec // a file in the package directory
+		rel, err := filepath.Rel(dir, path)
+		if err != nil {
+			return err
+		}
+		switch {
+		case e.IsDir() && path == dir:
+			return nil
+		case e.IsDir() && !grouped:
+			return filepath.SkipDir
+		case e.IsDir():
+			dirs = append(dirs, path)
+
+			return nil
+		case filepath.Ext(e.Name()) != ".go" || keep[filepath.ToSlash(rel)] != nil:
+			return nil
+		}
+		src, err := os.ReadFile(path) //nolint:gosec // a file in the package directory, which is the generator's to read and remove
 		if err != nil {
 			return err
 		}
 		if Generated(src) {
-			if err := os.Remove(path); err != nil {
+			return os.Remove(path) //nolint:gosec // a generated file in the package directory, which is the generator's to remove
+		}
+
+		return nil
+	}); err != nil {
+		return err
+	}
+
+	// deepest first, so a directory emptied by removing its subdirectory goes too
+	slices.Reverse(dirs)
+	for _, d := range dirs {
+		if entries, err := os.ReadDir(d); err == nil && len(entries) == 0 {
+			if err := os.Remove(d); err != nil {
 				return err
 			}
 		}
@@ -218,12 +283,18 @@ func fileStem(name string) string { return strings.ToLower(name) }
 // fileName is <group>_<kind>_<name>.go, with the name kept from reading as a
 // build constraint.
 func fileName(prefix, kind, name string) string {
+	return prefix + "_" + kindFile(kind, name)
+}
+
+// kindFile is <kind>_<name>.go, a file of the grouped layout, with the name
+// kept from reading as a build constraint.
+func kindFile(kind, name string) string {
 	stem := fileStem(name)
 	if buildSuffixes[stem] {
 		stem += "type"
 	}
 
-	return prefix + "_" + kind + "_" + stem + ".go"
+	return kind + "_" + stem + ".go"
 }
 
 func sortedKeys[V any](m map[string]V) []string {

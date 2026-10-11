@@ -1,4 +1,4 @@
-// Package pandorest generates typed Go SDKs from vendored OpenAPI documents.
+// Package pandorest generates typed Go Services from vendored OpenAPI documents.
 // It is inspired by Pandora, the go-azure-sdk generator
 // (https://github.com/hashicorp/pandora), and keeps its pipeline, scaled down
 // to a handful of documents in one repository:
@@ -40,6 +40,8 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path"
+	"path/filepath"
 	"slices"
 	"strings"
 
@@ -51,7 +53,7 @@ import (
 	"github.com/katbyte/pandorest/importer/workarounds"
 )
 
-// Config is what a repository generates its SDKs from.
+// Config is what a repository generates its Services from.
 type Config struct {
 	// Services are the APIs, in the order the commands process them.
 	Services []config.Service
@@ -205,13 +207,40 @@ func generateService(svc config.Service, stdout io.Writer) error {
 	if err != nil {
 		return err
 	}
-	n, err := generator.Generate(defs, generator.Options{Dir: svc.Path(svc.Output), Definitions: svc.Definitions, Version: svc.Version, ClientImport: cmp.Or(svc.ClientImport, config.DefaultClient), Client: svc.Client, ClientService: svc.ClientService, Credential: svc.Credential, NewDoc: svc.NewDoc, Notes: svc.Notes})
+	importPath, err := importPath(svc)
+	if err != nil {
+		return err
+	}
+	n, err := generator.Generate(defs, generator.Options{Dir: svc.Path(svc.Output), Definitions: svc.Definitions, Version: svc.Version, ClientImport: cmp.Or(svc.ClientImport, config.DefaultClient), Client: svc.Client, ClientService: svc.ClientService, Credential: svc.Credential, NewDoc: svc.NewDoc, Notes: svc.Notes, Grouped: svc.Grouped, Packages: svc.Packages, ImportPath: importPath, InlineSingleOptions: svc.InlineSingleOptions})
 	if err != nil {
 		return err
 	}
 	_, _ = fmt.Fprintf(stdout, "%s: %d files -> %s\n", svc.Name, n, svc.Path(svc.Output))
 
 	return nil
+}
+
+// importPath is the import path of a grouped service's Output, which its
+// packages import one another by: Output under the module path, from the
+// config (Module) or the repository's go.mod.
+func importPath(svc config.Service) (string, error) {
+	if !svc.Grouped {
+		return "", nil
+	}
+	if svc.Module != "" {
+		return path.Join(svc.Module, filepath.ToSlash(svc.Output)), nil
+	}
+	src, err := os.ReadFile(svc.Path("go.mod")) //nolint:gosec // the repository root, from the -root flag
+	if err != nil {
+		return "", fmt.Errorf("%s: the grouped layout needs the import path of %s, and neither the config (Module) nor go.mod says it: %w", svc.Name, svc.Output, err)
+	}
+	for line := range strings.SplitSeq(string(src), "\n") {
+		if module, ok := strings.CutPrefix(strings.TrimSpace(line), "module "); ok {
+			return path.Join(strings.TrimSpace(module), filepath.ToSlash(svc.Output)), nil
+		}
+	}
+
+	return "", fmt.Errorf("%s: the grouped layout needs the import path of %s, and go.mod names no module: set Module", svc.Name, svc.Output)
 }
 
 func diffService(svc config.Service, all []workarounds.Workaround, log func(string), stdout io.Writer) (bool, error) {

@@ -215,6 +215,13 @@ func (s Service) secretHeaders() []string {
 	return append([]string{apiKeyHeader}, s.SecretHeaders...)
 }
 
+// Logger is what WithLog takes: chttp's, named here so a generated package
+// can offer the option under its own name without importing chttp.
+type Logger = chttp.Logger
+
+// Retry is what WithRetry takes: chttp's, named here for the same reason.
+type Retry = chttp.Retry
+
 // Option is something a client is made with beside its address, its
 // credentials and its Service: what the application using the SDK decides,
 // not what the service is.

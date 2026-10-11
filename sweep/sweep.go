@@ -158,7 +158,9 @@ type Sweep struct {
 	// Definitions are the service's, as definitions.Load reads them.
 	Definitions *definitions.Service
 	// Client is the generated package's client, on which each operation's
-	// method is called by name.
+	// method is called by name: the one Client of the flat layout, or the
+	// client of the grouped one, whose field for the operation's tag has
+	// the method.
 	Client any
 	// StatusCode is the base client's: the status of an error for a status
 	// the operation does not document, and 0 for any other error.
@@ -296,7 +298,7 @@ func (s Sweep) Operation(ctx context.Context, op *definitions.Operation) Outcome
 // arguments builds the call: the context, the path parameters, and an options
 // struct with the required options and the case's options set.
 func (s Sweep) arguments(ctx context.Context, op *definitions.Operation, c Case) ([]reflect.Value, error) {
-	method := reflect.ValueOf(s.Client).MethodByName(op.Name)
+	method := s.method(op)
 	if !method.IsValid() {
 		return nil, errors.New("the client has no such method")
 	}
@@ -328,21 +330,47 @@ func (s Sweep) arguments(ctx context.Context, op *definitions.Operation, c Case)
 		if len(args) >= mt.NumIn() {
 			return nil, errors.New("the method takes no options")
 		}
-		options := reflect.New(mt.In(len(args))).Elem()
-		for _, o := range op.Options {
-			value, ok := c.Options[o.Field]
-			if !ok {
-				var always string
-				always, ok = lookupFold(s.Fixtures.Always, o.Name)
-				value = always
+		optionsType := mt.In(len(args))
+		if mt.IsVariadic() {
+			// options that may all be left out are taken variadically; Call fills the slice from the one value
+			optionsType = optionsType.Elem()
+		}
+		if optionsType.Kind() != reflect.Struct {
+			// the one option is an argument (InlineSingleOptions), given when the case or the fixtures have a value for it
+			o := &op.Options[0]
+			value, ok, err := s.optionValue(o, c)
+			if err != nil {
+				return nil, err
 			}
-			if !ok && o.Required {
-				var required string
-				required, ok = lookupFold(s.Fixtures.Options, o.Name)
-				if !ok {
-					return nil, fmt.Errorf("no value for required option %s", o.Name)
+			switch {
+			case ok && mt.IsVariadic() && o.Type.Type == definitions.List:
+				// a list goes as its elements
+				list := reflect.New(mt.In(len(args))).Elem()
+				if err := setValue(list, value); err != nil {
+					return nil, fmt.Errorf("option %s: %w", o.Name, err)
 				}
-				value = required
+				for i := range list.Len() {
+					args = append(args, list.Index(i))
+				}
+			case ok:
+				v := reflect.New(optionsType).Elem()
+				if err := setValue(v, value); err != nil {
+					return nil, fmt.Errorf("option %s: %w", o.Name, err)
+				}
+				args = append(args, v)
+			}
+			if len(args) != mt.NumIn() && !mt.IsVariadic() {
+				return nil, fmt.Errorf("built %d arguments for a method that takes %d", len(args), mt.NumIn())
+			}
+
+			return args, nil
+		}
+		options := reflect.New(optionsType).Elem()
+		for i := range op.Options {
+			o := &op.Options[i]
+			value, ok, err := s.optionValue(o, c)
+			if err != nil {
+				return nil, err
 			}
 			if !ok {
 				continue
@@ -358,6 +386,48 @@ func (s Sweep) arguments(ctx context.Context, op *definitions.Operation, c Case)
 	}
 
 	return args, nil
+}
+
+// optionValue is an option's value for a case: the case's own, else the
+// fixtures' Always, else, for a required option, the fixtures' Options,
+// without which a required option is an error.
+func (s Sweep) optionValue(o *definitions.Option, c Case) (value any, ok bool, err error) {
+	value, ok = c.Options[o.Field]
+	if !ok {
+		var always string
+		always, ok = lookupFold(s.Fixtures.Always, o.Name)
+		value = always
+	}
+	if !ok && o.Required {
+		var required string
+		required, ok = lookupFold(s.Fixtures.Options, o.Name)
+		if !ok {
+			return nil, false, fmt.Errorf("no value for required option %s", o.Name)
+		}
+		value = required
+	}
+
+	return value, ok, nil
+}
+
+// method finds the operation's method: on the client itself, or on the
+// client's field named for the operation's group.
+func (s Sweep) method(op *definitions.Operation) reflect.Value {
+	v := reflect.ValueOf(s.Client)
+	if m := v.MethodByName(op.Name); m.IsValid() {
+		return m
+	}
+	for gi := range s.Definitions.Groups {
+		grp := &s.Definitions.Groups[gi]
+		if !slices.ContainsFunc(grp.Operations, func(o definitions.Operation) bool { return o.Name == op.Name }) {
+			continue
+		}
+		if f := reflect.Indirect(v).FieldByName(grp.Name); f.IsValid() {
+			return f.MethodByName(op.Name)
+		}
+	}
+
+	return reflect.Value{}
 }
 
 // setValue sets a path argument or options field from a fixture: a string, a
@@ -434,7 +504,7 @@ type answer struct {
 // failure. hangUp cancels ctx, the context the call was given.
 func (s Sweep) call(ctx context.Context, hangUp context.CancelFunc, op *definitions.Operation, args []reflect.Value) (answer, error) {
 	var a answer
-	results := reflect.ValueOf(s.Client).MethodByName(op.Name).Call(args)
+	results := s.method(op).Call(args)
 	if len(results) != 2 || results[0].Kind() != reflect.Struct {
 		return a, errors.New("the method does not return a result and an error, as a generated one does")
 	}

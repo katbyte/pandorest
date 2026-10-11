@@ -2,10 +2,13 @@ package generator
 
 import (
 	"fmt"
+	"go/token"
 	"net/http"
 	"slices"
 	"strconv"
 	"strings"
+	"unicode"
+	"unicode/utf8"
 
 	"github.com/katbyte/pandorest/definitions"
 )
@@ -14,7 +17,7 @@ import (
 // when it has options, the method, and the Complete pager for a list.
 func (g *gen) methodFile(o *definitions.Operation) string {
 	responseType := o.Name + "OperationResponse"
-	optionsType := o.Name + "OperationOptions"
+	optionsType := o.Name + "Options"
 	g.declare(responseType, "operation "+o.Name)
 
 	var b strings.Builder
@@ -25,7 +28,42 @@ func (g *gen) methodFile(o *definitions.Operation) string {
 	}
 	g.writeMethod(&b, o, responseType, optionsType)
 	if o.Pageable != nil {
-		g.writeComplete(&b, o, optionsType)
+		g.writeCompleteResult(&b, o)
+		g.writeCompleteMethod(&b, o, optionsType)
+	}
+
+	return g.fileHeader(b.String())
+}
+
+// operationFile renders, in the types package of the grouped layout, what a
+// caller names of one operation: its response struct, its options struct and
+// the result type of its pager.
+func (g *gen) operationFile(o *definitions.Operation) string {
+	responseType := o.Name + "OperationResponse"
+	optionsType := o.Name + "Options"
+	g.declare(responseType, "operation "+o.Name)
+
+	var b strings.Builder
+	g.writeResponse(&b, o, responseType)
+	if len(o.Options) > 0 {
+		g.declare(optionsType, "operation "+o.Name)
+		g.writeOptions(&b, o, optionsType)
+	}
+	if o.Pageable != nil {
+		g.writeCompleteResult(&b, o)
+	}
+
+	return g.fileHeader(b.String())
+}
+
+// groupMethodFile renders, in a tag's package of the grouped layout, one
+// operation's method and, for a list, its pager, naming the types as the
+// types package's.
+func (g *gen) groupMethodFile(o *definitions.Operation) string {
+	var b strings.Builder
+	g.writeMethod(&b, o, g.typeName(o.Name+"OperationResponse"), g.typeName(o.Name+"Options"))
+	if o.Pageable != nil {
+		g.writeCompleteMethod(&b, o, g.typeName(o.Name+"Options"))
 	}
 
 	return g.fileHeader(b.String())
@@ -214,12 +252,114 @@ func (g *gen) arguments(o *definitions.Operation, optionsType string) (params, c
 			call = append(call, "input")
 		}
 	}
-	if len(o.Options) > 0 {
+	switch {
+	case g.inline(o):
+		opt := &o.Options[0]
+		if opt.Required {
+			params = append(params, g.inlineArgument(o)+" "+g.goType(opt.Type))
+		} else {
+			params = append(params, g.inlineArgument(o)+" ..."+g.inlineType(opt))
+		}
+		call = append(call, "option")
+	case g.optional(o):
+		params = append(params, "options ..."+optionsType)
+		call = append(call, "option")
+	case len(o.Options) > 0:
 		params = append(params, "options "+optionsType)
 		call = append(call, "options")
 	}
 
 	return params, call
+}
+
+// inline reports whether an operation's one option is taken as an argument in
+// place of the struct (Options.InlineSingleOptions): GetMovieLookup(ctx, term). A
+// list's pager sets the page options itself, so a list keeps its struct.
+func (g *gen) inline(o *definitions.Operation) bool {
+	return g.opts.InlineSingleOptions && len(o.Options) == 1 && o.Pageable == nil
+}
+
+// inlineType is the argument's type: the option's own, without the pointer
+// the struct holds a boolean or a number by, since an argument left out is
+// what the pointer's nil said; an optional list is taken as its elements,
+// a required one as the slice.
+func (g *gen) inlineType(opt *definitions.Option) string {
+	if opt.Type.Type == definitions.List {
+		return g.goType(*opt.Type.NestedItem)
+	}
+
+	return g.goType(opt.Type)
+}
+
+// localNames are the names a method body uses and the packages it imports,
+// which an inlined option's argument keeps clear of.
+var localNames = map[string]bool{"ctx": true, "input": true, "contentType": true, "opts": true, "req": true, "resp": true, "result": true, "err": true, "option": true, "options": true, "model": true, "c": true, "client": true, "context": true, "fmt": true, "http": true, "io": true, "url": true, "strconv": true, "strings": true, "json": true, "errors": true}
+
+// inlineArgument names the argument of an inlined option: the field's name
+// lower-cased at the front (Term: term), kept clear of the body's own names,
+// the packages it uses, Go's keywords and the path parameters by a suffix
+// (Type: typeOption, Url: urlOption).
+func (g *gen) inlineArgument(o *definitions.Operation) string {
+	field := o.Options[0].Field
+	first, size := utf8.DecodeRuneInString(field)
+	name := string(unicode.ToLower(first)) + field[size:]
+	if localNames[name] || name == g.qual || name == g.svc.Package || token.IsKeyword(name) || slices.ContainsFunc(o.PathParameters, func(p definitions.PathParameter) bool { return p.Argument == name }) {
+		name += "Option"
+	}
+
+	return name
+}
+
+// optional reports whether an operation's options may all be left out, so
+// that a call can leave the struct out altogether: GetSessions(ctx).
+func (g *gen) optional(o *definitions.Operation) bool {
+	return len(o.Options) > 0 && !g.inline(o) && !slices.ContainsFunc(o.Options, func(p definitions.Option) bool { return p.Required })
+}
+
+// optionsVar is the name the body reads the options by: the one struct a
+// variadic call was given, the struct built from an inlined argument, or the
+// parameter itself.
+func (g *gen) optionsVar(o *definitions.Operation) string {
+	if g.optional(o) || g.inline(o) {
+		return "option"
+	}
+
+	return "options"
+}
+
+// writeOptionsPrelude builds the options the body sends: the one struct a
+// variadic call was given, or the struct an inlined argument fills, refusing
+// more than one before any request is made.
+func (g *gen) writeOptionsPrelude(b *strings.Builder, o *definitions.Operation, method, optionsType string) {
+	switch {
+	case g.inline(o):
+		opt := &o.Options[0]
+		arg := g.inlineArgument(o)
+		fmt.Fprintf(b, "\tvar option %s\n", optionsType)
+		switch {
+		case opt.Required:
+			fmt.Fprintf(b, "\toption.%s = %s\n\n", opt.Field, held(opt, arg))
+		case opt.Type.Type == definitions.List:
+			fmt.Fprintf(b, "\tif len(%s) > 0 {\n\t\toption.%s = %s\n\t}\n\n", arg, opt.Field, arg)
+		default:
+			fmt.Fprintf(b, "\tif len(%[1]s) > 1 {\n\t\terr = fmt.Errorf(\"%[2]s takes one %[1]s at most, not %%d\", len(%[1]s))\n\t\treturn\n\t}\n", arg, method)
+			fmt.Fprintf(b, "\tif len(%s) == 1 {\n\t\toption.%s = %s\n\t}\n\n", arg, opt.Field, held(opt, arg+"[0]"))
+		}
+	case g.optional(o):
+		fmt.Fprintf(b, "\tif len(options) > 1 {\n\t\terr = fmt.Errorf(\"%s takes one options struct at most, not %%d\", len(options))\n\t\treturn\n\t}\n", method)
+		fmt.Fprintf(b, "\tvar option %s\n\tif len(options) == 1 {\n\t\toption = options[0]\n\t}\n\n", optionsType)
+	}
+}
+
+// held is the expression the options struct holds an argument's value by: its
+// address for a boolean or a number, the value for the rest (see optionType).
+func held(opt *definitions.Option, expr string) string {
+	switch opt.Type.Type {
+	case definitions.Boolean, definitions.Integer, definitions.Integer64, definitions.Float, definitions.Double:
+		return "&" + expr
+	default:
+		return expr
+	}
 }
 
 var httpMethods = map[string]string{
@@ -255,6 +395,7 @@ func (g *gen) writeMethod(b *strings.Builder, o *definitions.Operation, response
 	}
 	fmt.Fprintf(b, "func (c Client) %s(%s) (result %s, err error) {\n",
 		o.Name, strings.Join(append([]string{"ctx context.Context"}, params...), ", "), responseType)
+	g.writeOptionsPrelude(b, o, o.Name, optionsType)
 
 	b.WriteString("\topts := client.RequestOptions{\n")
 	if asksFor := o.Response.AsksFor(); asksFor != "" {
@@ -275,7 +416,7 @@ func (g *gen) writeMethod(b *strings.Builder, o *definitions.Operation, response
 	b.WriteString("\t\t},\n")
 	fmt.Fprintf(b, "\t\tHTTPMethod: %s,\n", httpMethods[o.Method])
 	if len(o.Options) > 0 {
-		b.WriteString("\t\tOptionsObject: options,\n")
+		fmt.Fprintf(b, "\t\tOptionsObject: %s,\n", g.optionsVar(o))
 	}
 	fmt.Fprintf(b, "\t\tPath: %s,\n", pathExpression(o))
 	if o.Response != nil && o.Response.Type.Type == definitions.RawFile {
@@ -316,16 +457,22 @@ func (g *gen) writeMethod(b *strings.Builder, o *definitions.Operation, response
 	b.WriteString("\treturn\n}\n")
 }
 
-func (g *gen) writeComplete(b *strings.Builder, o *definitions.Operation, optionsType string) {
-	p := o.Pageable
-	method := o.Name + "Complete"
+// writeCompleteResult declares the result of a list's pager.
+func (g *gen) writeCompleteResult(b *strings.Builder, o *definitions.Operation) {
 	resultType := o.Name + "CompleteResult"
 	g.declare(resultType, "operation "+o.Name)
+
+	fmt.Fprintf(b, "\n// %s is every result %sComplete loaded.\n", resultType, o.Name)
+	fmt.Fprintf(b, "type %s struct {\n\tLatestHttpResponse *http.Response\n\tItems []%s\n}\n\n", resultType, g.goType(o.Pageable.ItemType))
+}
+
+// writeCompleteMethod writes a list's pager.
+func (g *gen) writeCompleteMethod(b *strings.Builder, o *definitions.Operation, optionsType string) {
+	p := o.Pageable
+	method := o.Name + "Complete"
+	resultType := g.typeName(o.Name + "CompleteResult")
 	g.declare("Client."+method, "operation "+o.Name)
 	params, call := g.arguments(o, optionsType)
-
-	fmt.Fprintf(b, "\n// %s is every result %s loaded.\n", resultType, method)
-	fmt.Fprintf(b, "type %s struct {\n\tLatestHttpResponse *http.Response\n\tItems []%s\n}\n\n", resultType, g.goType(p.ItemType))
 
 	if p.ByPage {
 		fmt.Fprintf(b, "// %s calls %s page by page, from the\n", method, o.Name)
@@ -336,16 +483,18 @@ func (g *gen) writeComplete(b *strings.Builder, o *definitions.Operation, option
 		fmt.Fprintf(b, "// result is loaded. options.%s is the page size, client.DefaultPageSize when\n// unset.\n", p.LimitOption)
 	}
 	fmt.Fprintf(b, "func (c Client) %s(%s) (result %s, err error) {\n", method, strings.Join(append([]string{"ctx context.Context"}, params...), ", "), resultType)
-	fmt.Fprintf(b, "\tlimit := client.DefaultPageSize\n\tif options.%[1]s != nil && *options.%[1]s > 0 {\n\t\tlimit = *options.%[1]s\n\t}\n", p.LimitOption)
-	fmt.Fprintf(b, "\toptions.%s = &limit\n", p.LimitOption)
+	g.writeOptionsPrelude(b, o, method, optionsType)
+	ov := g.optionsVar(o)
+	fmt.Fprintf(b, "\tlimit := client.DefaultPageSize\n\tif %[2]s.%[1]s != nil && *%[2]s.%[1]s > 0 {\n\t\tlimit = *%[2]s.%[1]s\n\t}\n", p.LimitOption, ov)
+	fmt.Fprintf(b, "\t%s.%s = &limit\n", ov, p.LimitOption)
 	if p.ByPage {
-		fmt.Fprintf(b, "\tnumber := 1\n\tif options.%[1]s != nil && *options.%[1]s > 0 {\n\t\tnumber = *options.%[1]s\n\t}\n", p.StartIndexOption)
-		fmt.Fprintf(b, "\toptions.%s = &number\n", p.StartIndexOption)
+		fmt.Fprintf(b, "\tnumber := 1\n\tif %[2]s.%[1]s != nil && *%[2]s.%[1]s > 0 {\n\t\tnumber = *%[2]s.%[1]s\n\t}\n", p.StartIndexOption, ov)
+		fmt.Fprintf(b, "\t%s.%s = &number\n", ov, p.StartIndexOption)
 	} else {
-		fmt.Fprintf(b, "\tstart := 0\n\tif options.%[1]s != nil {\n\t\tstart = *options.%[1]s\n\t}\n", p.StartIndexOption)
+		fmt.Fprintf(b, "\tstart := 0\n\tif %[2]s.%[1]s != nil {\n\t\tstart = *%[2]s.%[1]s\n\t}\n", p.StartIndexOption, ov)
 	}
 	b.WriteString("\tfor {\n")
-	fmt.Fprintf(b, "\t\tvar page %sOperationResponse\n", o.Name)
+	fmt.Fprintf(b, "\t\tvar page %s\n", g.typeName(o.Name+"OperationResponse"))
 	fmt.Fprintf(b, "\t\tpage, err = c.%s(%s)\n", o.Name, strings.Join(append([]string{"ctx"}, call...), ", "))
 	b.WriteString("\t\tresult.LatestHttpResponse = page.HttpResponse\n")
 	b.WriteString("\t\tif err != nil {\n\t\t\terr = fmt.Errorf(\"loading results: %w\", err)\n\t\t\treturn\n\t\t}\n")
@@ -358,7 +507,7 @@ func (g *gen) writeComplete(b *strings.Builder, o *definitions.Operation, option
 		// options holds a pointer to number, so the next call asks for the next page
 		b.WriteString("\t\tnumber++\n")
 	} else {
-		fmt.Fprintf(b, "\t\tstart += len(page.Model.%s)\n\t\toptions.%s = &start\n", p.ItemsField, p.StartIndexOption)
+		fmt.Fprintf(b, "\t\tstart += len(page.Model.%s)\n\t\t%s.%s = &start\n", p.ItemsField, ov, p.StartIndexOption)
 		b.WriteString("\t\t// a short page is the last; so is reaching the total, when the server\n")
 		b.WriteString("\t\t// reports one (a list may report 0 whatever it holds)\n")
 		fmt.Fprintf(b, "\t\tif len(page.Model.%[1]s) < limit || page.Model.%[2]s > 0 && start >= page.Model.%[2]s {\n\t\t\treturn\n\t\t}\n", p.ItemsField, p.TotalField)

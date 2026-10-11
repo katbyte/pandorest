@@ -110,6 +110,33 @@ func (s sdk) GetNone(ctx context.Context) (result[page], error) {
 	return get[page](ctx, s.c, "/none", nil)
 }
 
+// single is an options struct of one option, which an inlined argument fills.
+type single struct{ Term string }
+
+func (single) ToHeaders() *client.Headers { return &client.Headers{} }
+
+func (o single) ToQuery() *client.QueryParams {
+	out := client.QueryParams{}
+	if o.Term != "" {
+		out.Append("term", o.Term)
+	}
+
+	return &out
+}
+
+func (s sdk) GetLookup(ctx context.Context, term ...string) (result[item], error) {
+	var o single
+	if len(term) == 1 {
+		o.Term = term[0]
+	}
+
+	return get[item](ctx, s.c, "/lookup", o)
+}
+
+func (s sdk) GetByIDs(ctx context.Context, ids ...string) (result[item], error) {
+	return get[item](ctx, s.c, "/byids", single{Term: client.CSV(ids)})
+}
+
 func (s sdk) GetGone(ctx context.Context) (result[item], error) {
 	return get[item](ctx, s.c, "/gone", nil)
 }
@@ -167,6 +194,8 @@ var served = answers{
 	"/config/items/1": {http.StatusOK, `{"Id": "1", "Name": "settings"}`},
 	"/things/":        {http.StatusOK, `{"Id": "none"}`},
 	"/none":           {http.StatusOK, `{"Items": [], "Total": 0}`},
+	"/lookup":         {http.StatusOK, `{"Id": "l", "Name": "looked up"}`},
+	"/byids":          {http.StatusOK, `{"Id": "b", "Name": "by ids"}`},
 	"/gone":           {http.StatusNotFound, "no"},
 	"/page":           {http.StatusOK, "<html>"},
 	"/lost":           {http.StatusOK, `{"Items": [{"Title": "t", "Year": 1999}], "Total": 1}`},
@@ -225,8 +254,13 @@ func service() *definitions.Service {
 	thing := op("GetThing", "/things/{id}", ref("Item"))
 	thing.PathParameters = []definitions.PathParameter{{Name: "id", Argument: "id", Type: definitions.TypeRef{Type: definitions.Integer}}}
 
+	lookup := op("GetLookup", "/lookup", ref("Item"))
+	lookup.Options = []definitions.Option{{Name: "term", Field: "Term", In: definitions.InQuery, Type: str()}}
+	byIDs := op("GetByIDs", "/byids", ref("Item"))
+	byIDs.Options = []definitions.Option{{Name: "ids", Field: "IDs", In: definitions.InQuery, Type: definitions.TypeRef{Type: definitions.List, NestedItem: &definitions.TypeRef{Type: definitions.String}}}}
+
 	return &definitions.Service{Name: "mini", Groups: []definitions.Group{{Name: "Items", Operations: []definitions.Operation{
-		list, one, settings, thing,
+		list, one, settings, thing, lookup, byIDs,
 		op("GetNone", "/none", ref("Page")), op("GetGone", "/gone", ref("Item")), op("GetPage", "/page", ref("Item")),
 		op("GetLost", "/lost", ref("Page")), op("GetExtra", "/extra", ref("Page")),
 		op("GetFile", "/file", &definitions.Body{ContentType: "application/octet-stream", Type: definitions.TypeRef{Type: definitions.RawFile}}),
@@ -415,6 +449,26 @@ func TestEventStream(t *testing.T) {
 	}
 }
 
+// A client of the grouped layout has each tag's operations on a field named
+// for the tag; the sweep finds a method there by the operation's group.
+func TestGroupedClient(t *testing.T) {
+	t.Parallel()
+
+	s, _ := newSweep(t, served)
+	flat, ok := s.Client.(sdk)
+	if !ok {
+		t.Fatal("the test client is not the fake sdk")
+	}
+	s.Client = &struct{ Items sdk }{flat}
+	if out := s.Operation(t.Context(), operation(t, s, "GetItems")); len(out.Failures) > 0 {
+		t.Errorf("a grouped client = %q", out.Failures)
+	}
+	s.Client = &struct{ Other sdk }{sdk{}}
+	if out := s.Operation(t.Context(), operation(t, s, "GetItems")); len(out.Failures) != 1 || !strings.Contains(out.Failures[0], "the client has no such method") {
+		t.Errorf("a grouped client without the group = %q", out.Failures)
+	}
+}
+
 // A strict sweep also fails a key the model has no field for; a file and an
 // answer the model holds raw have none.
 func TestStrict(t *testing.T) {
@@ -463,6 +517,36 @@ func TestOptions(t *testing.T) {
 	}
 }
 
+// An option taken as an argument (InlineSingleOptions) is filled from the
+// case or the fixtures by name as a struct's field is, a list as its
+// elements, and left out when nothing names it.
+func TestInlinedOption(t *testing.T) {
+	t.Parallel()
+
+	s, queries := newSweep(t, served)
+	s.Cases = map[string]sweep.Case{"GetLookup": {Options: map[string]any{"Term": "x"}}, "GetByIDs": {Options: map[string]any{"IDs": "1,2"}}}
+	for _, name := range []string{"GetLookup", "GetByIDs"} {
+		if out := s.Operation(t.Context(), operation(t, s, name)); len(out.Failures) > 0 {
+			t.Fatalf("%s: failures = %q", name, out.Failures)
+		}
+	}
+	for _, want := range []string{"/lookup?term=x", "/byids?term=1%2C2"} {
+		if !slices.Contains(*queries, want) {
+			t.Errorf("the server saw %q, want %s", *queries, want)
+		}
+	}
+
+	s.Cases = nil
+	if out := s.Operation(t.Context(), operation(t, s, "GetLookup")); len(out.Failures) > 0 || !slices.Contains(*queries, "/lookup?") {
+		t.Errorf("without a value = %q, the server saw %q", out.Failures, *queries)
+	}
+
+	s.Definitions.Groups[0].Operations[4].Options[0].Required = true // term
+	if out := s.Operation(t.Context(), operation(t, s, "GetLookup")); len(out.Failures) != 1 || !strings.Contains(out.Failures[0], "no value for required option term") {
+		t.Errorf("a required argument nothing supplies = %q", out.Failures)
+	}
+}
+
 // A case for an operation that is gone, renamed or not a GET is stale.
 func TestStaleCases(t *testing.T) {
 	t.Parallel()
@@ -489,7 +573,7 @@ func TestRun(t *testing.T) {
 	s.Run(t)
 
 	// every GET but the skipped one was called, and the DELETE was not
-	if len(*queries) != 10 || slices.ContainsFunc(*queries, func(q string) bool { return strings.HasPrefix(q, "/lost") }) {
+	if len(*queries) != 12 || slices.ContainsFunc(*queries, func(q string) bool { return strings.HasPrefix(q, "/lost") }) {
 		t.Errorf("the server saw %d requests: %q", len(*queries), *queries)
 	}
 }

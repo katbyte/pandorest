@@ -8,7 +8,7 @@
 ![lint](https://github.com/katbyte/pandorest/actions/workflows/pr-golangci-lint.yaml/badge.svg)
 [![coverage](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/katbyte/pandorest/badges/coverage.json)](https://github.com/katbyte/pandorest/actions/workflows/coverage.yaml)
 
-pandorest generates typed Go SDKs from vendored OpenAPI documents. It was written in embyfin-mcp for the Emby, Jellyfin and TMDB SDKs, copied into three more repositories, and is now here so they share one.
+pandorest generates typed Go Services from vendored OpenAPI documents. It was written in embyfin-mcp for the Emby, Jellyfin and TMDB Services, copied into three more repositories, and is now here so they share one.
 
 Inspired by [Pandora](https://github.com/hashicorp/pandora), the [go-azure-sdk](https://github.com/hashicorp/go-azure-sdk) generator: the same importer, definitions, differ and generator pipeline, scaled down to a handful of documents in one repository:
 
@@ -23,7 +23,7 @@ api-defs/
 
 It does what the alternatives were tried and rejected for (oapi-codegen, openapi-generator): errors for undocumented statuses rather than a result per content type, plain string ids, readable names for machine-made operationIds, no builder chains or nullable wrappers, and a test for every operation it writes.
 
-## The SDKs it generates
+## The Services it generates
 
 Each lives in the repository that vendors its document, beside the MCP server built on it. The version is the server release the document was taken from.
 
@@ -95,7 +95,8 @@ Everything about a service is in its `config.Service`, and everything but the fi
 |---|---|
 | `Name` | the `-service` name, and the prefix of the document and definitions names |
 | `Package`, `Output` | the generated package's name and directory, for a service generated from its highest version alone |
-| `Outputs` | for a service generated from every version it vendors: each document's version to its package directory (`"4.10.0.40": "sdk/emby/v1"`); every version listed must be vendored and every document listed, and `Output` is then unused |
+| `Outputs` | for a service generated from every version it vendors: each document's version to its package directory (`"4.10.0.40": "sdk/emby/4.10.0.40"`); every version listed must be vendored and every document listed, and `Output` is then unused |
+| `Grouped`, `Packages`, `Module` | the grouped layout (see Generating): a package per tag, named for the tag unless `Packages` says otherwise (`"Package": "packages"`), importing one another under the repository's module path, `Module`, which is read from `go.mod` when unset |
 | `Auth` | the name of the base client's authorizer: the generated `New(baseURL, token)` calls `client.<Auth>(token)`, which is `APIKey` or `Bearer` on pandorest's own |
 | `ClientService` | the name of a `client.Service` written by hand in the generated package, which the generated `New` makes its client from |
 | `ClientImport` | the import path of a base client of the repository's own, in place of pandorest's |
@@ -109,7 +110,8 @@ Everything about a service is in its `config.Service`, and everything but the fi
 | `SendRequired` | a property the document requires is always sent |
 | `PreferJSON` | a response that lists JSON beside another type answers JSON, not a file |
 | `ExpectSameShape` | a status outside 2xx that answers the success shape is expected, not an error |
-| `Credential`, `NewDoc` | the generated `New` in the service's words: what its credential is called (`API key` names the parameter `apiKey` and words the refusal of an empty one), and its documentation |
+| `InlineSingleOptions` | an operation with one query or header parameter takes it as an argument in place of the options struct (see Generating); off, every operation with options takes the struct |
+| `Credential`, `NewDoc` | the generated `New` in the service's words: what its credential is called (`API key` names the parameter `apiKey` and words the refusal of an empty one; a phrase of more than two words words the refusal and the parameter is `credential`), and its documentation |
 | `Client` | the source of `client.go` in place of the default, for a service that wants a `New` of another shape; it declares no imports and may use the standard packages generated code does (`errors`, `fmt`, `strings`, `strconv`, `net/http`, `net/url`, `io`, `encoding/json`, `context`, `slices`) |
 | `Notes` | a paragraph for the generated package's documentation |
 
@@ -204,30 +206,58 @@ A change is breaking when it would break a caller of the generated SDK: a remova
 
 ## Generating
 
-`generate` writes one package per service, with a file per operation, per model and per tag's enums:
+`generate` writes a service's SDK in one of two layouts. Grouped (`Grouped: true`) is laid out the way go-azure-sdk lays out a service, as packages, so a caller names every type as `emby.X`, reaches every operation through one client, and never imports a tag's package, whose name is then free to be a word the caller uses for a variable:
+
+```
+sdk/emby/                      package emby:  every model (model_<model>.go), every enum (constants_<tag>.go),
+                                              every operation's options and response types (operation_<operation>.go),
+                                              New for the base client (client.go), the base client's options and
+                                              error helpers under this name (helpers.go), and the service's own service.go
+sdk/emby/library/              package library: Client and NewClient (client.go), a method per operation
+                                              (method_<operation>.go) and its test, the canned server (client_test.go)
+sdk/emby/client/               package client: New, and Client with a field per tag (client.go)
+sdk/emby/groups.json           each operation's tag and each tag's package, for a caller moving from the flat layout
+```
+
+```go
+import (
+	"github.com/katbyte/embyfin-mcp/sdk/emby"
+	"github.com/katbyte/embyfin-mcp/sdk/emby/client"
+)
+
+c, err := client.New(url, key, emby.WithLog(log))
+res, err := c.Library.GetItemsByIdAncestors(ctx, id, emby.GetItemsByIdAncestorsOptions{UserId: user})
+var parent emby.BaseItemDto = res.Model[0]
+```
+
+A package's name matches its directory, so under a version directory (`Outputs`) the types package is a directory of its own: `sdk/emby/4.10.0.40/emby`, `sdk/emby/4.10.0.40/library`, `sdk/emby/4.10.0.40/client`. A tag whose lowercased name is a Go keyword, a standard library package, `client` or the SDK's own name fails the generation and is named in `Packages`; an entry naming a tag the document lacks fails too. Method names stay unique across the SDK, so the sweep's cases and a repository's own checks go by the bare name, and `check` and the sweep walk the tag packages. An authorizer declared in the service's own file is named in `Auth` by its lowercase name (`credential`), where an uppercase one is the base client's. The packages import one another under the repository's module path, read from `go.mod` or set as `Module`, so a run against a root with no `go.mod` (a staleness test generating into a scratch directory) sets `Module`.
+
+Moving a repository from the flat layout is mostly a script over `groups.json`: `Methods` names each method's tag, the `Complete` pagers included, and `Groups` each tag's package and the field on `Client` it is reached by, so `c.GetItems(` becomes `c.Items.GetItems(`. What the script cannot do: the hand-written `service.go` moves to the types package (`sdk/emby/4.10.0.40/emby`); a hand-written test of the whole client (one that called `New` and then a method) moves to the `client` package, since the types package has no methods and `New` there gives the base client; and the code that built the client by hand, once `ClientService`, `Auth` and `Credential` describe it, is unused and goes. A hand-written Go file left where a generated one goes, a `doc.go` moved beside the types say, is refused rather than overwritten.
+
+Flat (the default) writes one package per service, with a file per operation, per model and per tag's enums:
 
 ```
 client.go                                 Client, New, APIVersion, DocumentVersion
 client_test.go                            the canned servers the generated tests share
 doc.go                                    package documentation, the workarounds applied
 <tag>_method_<operation>.go               the method, <Name>OperationResponse,
-                                          <Name>OperationOptions, and for a list
+                                          <Name>Options, and for a list
                                           <Name>Complete and <Name>CompleteResult
 <tag>_method_<operation>_test.go          the operation's generated test
 <tag>_model_<model>.go                    one model
 <tag>_constants.go                        the tag's enums, with PossibleValuesFor<Enum>
 ```
 
-Every generated file starts with the generated-code header; files with it that generation no longer produces are deleted, and anything without it is left alone, so hand-written files can live beside the generated ones. The one exception is `doc.go`, which starts with the package comment instead and says there that pandorest generated it: linters pass over a file with the header, and would tell a package with a hand-written file in it that it has no package comment. `generator.Generated` tells a generated file from one written by hand, `doc.go` included.
+Every generated file starts with the generated-code header; files with it that generation no longer produces are deleted, and anything without it is left alone, so hand-written files can live beside the generated ones, and one at a name generation writes to is refused rather than overwritten. The one exception to the header is `doc.go`, which starts with the package comment instead and says there that pandorest generated it: linters pass over a file with the header, and would tell a package with a hand-written file in it that it has no package comment. `generator.Generated` tells a generated file from one written by hand, `doc.go` included.
 
-A method takes `ctx`, the path parameters, the body (`input`: the model by value, or an `io.Reader` and a content type), then the options struct by value, and returns `(result <Name>OperationResponse, err error)`:
+A method takes `ctx`, the path parameters, the body (`input`: the model by value, or an `io.Reader` and a content type), then the options struct by value, and returns `(result <Name>OperationResponse, err error)`. When the document requires none of the options the struct may be left out, so a call with no filters is `c.GetSessions(ctx)`; two structs are refused before any request is made. With `InlineSingleOptions` an operation with one option takes it as an argument instead: `c.GetMovieLookup(ctx, term)` or `c.GetMovieLookup(ctx)`, `c.PostIndexer(ctx, v, false)` sending false where `c.PostIndexer(ctx, v)` sends nothing, a required one plain, a list as its elements; an operation with two or more keeps the struct, as does a list that pages:
 
 ```go
-res, err := c.GetItems(ctx, emby.GetItemsOperationOptions{Recursive: new(true), Limit: new(50)})
+res, err := c.GetItems(ctx, emby.GetItemsOptions{Recursive: new(true), Limit: new(50)})
 res.HttpResponse // set whenever the server answered, its body readable again
 res.Model        // *emby.QueryResultBaseItemDto
 
-all, err := c.GetItemsComplete(ctx, emby.GetItemsOperationOptions{Recursive: new(true)})
+all, err := c.GetItemsComplete(ctx)
 all.Items        // every page
 ```
 
@@ -317,7 +347,7 @@ A repository can still keep a base client of its own and name it in `ClientImpor
 
 ## What was left out of Pandora
 
-Resource ID types and parsers (the servers' ids are opaque strings), per-model predicates for `CompleteMatchingPredicate`, `Default<Name>OperationOptions` constructors (the zero value is the default), long-running operation pollers, API versions, the Terraform and documentation generators, and the data API server: a handful of documents in one repository need none of it.
+Resource ID types and parsers (the servers' ids are opaque strings), per-model predicates for `CompleteMatchingPredicate`, `Default<Name>Options` constructors (the zero value is the default), long-running operation pollers, API versions, the Terraform and documentation generators, and the data API server: a handful of documents in one repository need none of it.
 
 ## Development
 

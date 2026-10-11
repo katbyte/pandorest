@@ -270,6 +270,55 @@ func TestEveryVersion(t *testing.T) {
 	}
 }
 
+// A grouped service gets its packages, with the import path read from the
+// repository's go.mod, and check walks them.
+func TestGroupedRepository(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	writeFile(t, filepath.Join(root, "go.mod"), "module example.org/repo\n\ngo 1.27\n")
+	writeFile(t, filepath.Join(root, "api-defs", "mini-openapi-1.9.json"), miniDocument)
+	cfg := pandorest.Config{Services: []config.Service{{Name: "mini", Package: "mini", Output: "sdk/mini", Naming: config.OperationIDNaming, Auth: "APIKey", ClientService: "service", Grouped: true}}, Workarounds: []workarounds.Workaround{searchTerm{}}}
+	run := func(args ...string) (string, error) {
+		var out, log bytes.Buffer
+		err := pandorest.Run(cfg, append(args, "-root", root, "-quiet"), &out, &log)
+
+		return out.String(), err
+	}
+	for _, cmd := range []string{"import", "generate", "check"} {
+		if stdout, err := run(cmd); err != nil {
+			t.Fatalf("%s = %v:\n%s", cmd, err, stdout)
+		}
+	}
+	if method := read(t, filepath.Join(root, "sdk", "mini", "items"), "method_getitems.go"); !strings.Contains(method, `"example.org/repo/sdk/mini"`) {
+		t.Errorf("the items package does not import the types package by the module's path:\n%s", method)
+	}
+	if aggregate := read(t, filepath.Join(root, "sdk", "mini", "client"), "client.go"); !strings.Contains(aggregate, "items.Client") {
+		t.Errorf("client lacks the Items field:\n%s", aggregate)
+	}
+
+	// without go.mod or Module, generate says what it needs; with Module it needs no go.mod
+	if err := os.Remove(filepath.Join(root, "go.mod")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := run("generate"); err == nil || !strings.Contains(err.Error(), "the grouped layout needs the import path of sdk/mini, and neither the config (Module) nor go.mod says it") {
+		t.Errorf("generate without go.mod = %v", err)
+	}
+	cfg.Services[0].Module = "example.org/other"
+	if stdout, err := run("generate"); err != nil {
+		t.Fatalf("generate with Module = %v:\n%s", err, stdout)
+	}
+	if method := read(t, filepath.Join(root, "sdk", "mini", "items"), "method_getitems.go"); !strings.Contains(method, `"example.org/other/sdk/mini"`) {
+		t.Errorf("the items package does not import the types package under Module:\n%s", method)
+	}
+}
+
+func read(t *testing.T, dir, name string) string {
+	t.Helper()
+
+	return listFiles(t, dir)[name]
+}
+
 // A refreshed document is vendored beside the old one and takes over by being
 // the higher version; the diff says what it changes, and the definitions are
 // stale until it is imported.

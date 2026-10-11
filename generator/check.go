@@ -13,9 +13,10 @@ import (
 	"github.com/katbyte/pandorest/definitions"
 )
 
-// Check verifies that the package in dir has a method on Client for every
-// operation in the definitions (and a Complete method for every list), and
-// returns how many operations it found.
+// Check verifies that the package in dir, or the packages under it in the
+// grouped layout, have a method on a Client for every operation in the
+// definitions (and a Complete method for every list), and returns how many
+// operations it found.
 func Check(svc *definitions.Service, dir string) (int, error) {
 	methods, err := clientMethods(dir)
 	if err != nil {
@@ -40,23 +41,22 @@ func Check(svc *definitions.Service, dir string) (int, error) {
 	return len(ops), nil
 }
 
-// clientMethods returns the names of the methods declared on Client across
-// the non-test Go files in dir.
+// clientMethods returns the names of the methods declared on a type named
+// Client across the non-test Go files in dir and the directories under it.
 func clientMethods(dir string) (map[string]bool, error) {
-	entries, err := os.ReadDir(dir)
-	if err != nil {
-		return nil, err
-	}
 	methods := map[string]bool{}
 	fset := token.NewFileSet()
-	for _, e := range entries {
+	err := filepath.WalkDir(dir, func(path string, e os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
 		name := e.Name()
 		if e.IsDir() || filepath.Ext(name) != ".go" || strings.HasSuffix(name, "_test.go") {
-			continue
+			return nil
 		}
-		f, err := parser.ParseFile(fset, filepath.Join(dir, name), nil, parser.SkipObjectResolution)
+		f, err := parser.ParseFile(fset, path, nil, parser.SkipObjectResolution)
 		if err != nil {
-			return nil, err
+			return err
 		}
 		for _, d := range f.Decls {
 			fn, ok := d.(*ast.FuncDecl)
@@ -71,7 +71,9 @@ func clientMethods(dir string) (map[string]bool, error) {
 				methods[fn.Name.Name] = true
 			}
 		}
-	}
 
-	return methods, nil
+		return nil
+	})
+
+	return methods, err
 }

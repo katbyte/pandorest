@@ -112,7 +112,9 @@ const testClient = config.DefaultClient
 func generateInModule(t *testing.T, svc *definitions.Service, opts generator.Options) string {
 	t.Helper()
 
-	opts.Dir = filepath.Join("testdata", "mini")
+	if opts.Dir == "" {
+		opts.Dir = filepath.Join("testdata", "mini")
+	}
 	opts.Definitions = "api-defs/mini"
 	opts.ClientImport = testClient
 	if err := os.RemoveAll(opts.Dir); err != nil {
@@ -171,7 +173,7 @@ func TestAcceptOption(t *testing.T) {
 	goTool(t, dir, "test")
 
 	method := read(t, dir, "items_method_getitem.go")
-	for _, want := range []string{"\t// What to ask for.\n\tAccept string\n", `out.Append("Accept", o.Accept)`, "func (c Client) GetItem(ctx context.Context, itemId string, options GetItemOperationOptions) ("} {
+	for _, want := range []string{"\t// What to ask for.\n\tAccept string\n", `out.Append("Accept", o.Accept)`, "func (c Client) GetItem(ctx context.Context, itemId string, options ...GetItemOptions) ("} {
 		if !strings.Contains(method, want) {
 			t.Errorf("GetItem has no %q:\n%s", want, method)
 		}
@@ -224,6 +226,100 @@ func TestTextAnswer(t *testing.T) {
 	}
 }
 
+// The grouped layout: every type in the package at the root, a package per
+// tag holding only its client and methods, client holding New and a Client
+// with a field per tag, and the map a caller rewrites by. The packages build
+// and their tests pass.
+//
+//nolint:paralleltest // writes the testdata package the other tests would remove
+func TestGrouped(t *testing.T) {
+	svc := miniDefinitions(t)
+	dir := generateInModule(t, svc, generator.Options{Grouped: true, ImportPath: "github.com/katbyte/pandorest/generator/testdata/mini", ClientService: "service", Packages: map[string]string{"Image": "images", "Sync": "syncs"}})
+	writeServiceFile(t, dir)
+	goTool(t, dir+"/...", "vet")
+	goTool(t, dir+"/...", "test")
+
+	for _, want := range []string{
+		"doc.go", "client.go", "helpers.go", "model_item.go", "model_queryresult.go", "constants_common.go", "operation_getitems.go", "operation_getitemimage.go",
+		"items/doc.go", "items/client.go", "items/method_getitems.go", "items/method_getitems_test.go", "items/client_test.go", "images/method_setitemimage.go", "syncs/method_putsync.go",
+		"client/doc.go", "client/client.go", "client/client_test.go", "groups.json",
+	} {
+		if _, err := os.Stat(filepath.Join(dir, filepath.FromSlash(want))); err != nil {
+			t.Errorf("no %s", want)
+		}
+	}
+	if entries, _ := os.ReadDir(filepath.Join(dir, "common")); len(entries) > 0 {
+		t.Error("the common group, which has no operations, got a package")
+	}
+	// a tag whose name the standard library uses is refused until Packages names it
+	if _, err := generator.Render(svc, generator.Options{Grouped: true, ImportPath: "x/mini", ClientImport: testClient}); err == nil || !strings.Contains(err.Error(), `the tag Image would be package "image", which the standard library or this layout already uses: name it in Packages`) {
+		t.Errorf("a tag named like a standard library package = %v", err)
+	}
+	if _, err := generator.Render(svc, generator.Options{Grouped: true, ImportPath: "x/mini", ClientImport: testClient, Packages: map[string]string{"Image": "images", "Sync": "syncs", "Ghost": "g"}}); err == nil || !strings.Contains(err.Error(), "Packages names the tag Ghost, which the document has no operations under") {
+		t.Errorf("a stale Packages entry = %v", err)
+	}
+
+	// the types package names everything a caller spells, with the base client's helpers under its own name
+	root := read(t, dir, "operation_getitems.go") + read(t, dir, "helpers.go") + read(t, dir, "client.go")
+	for _, want := range []string{"type GetItemsOptions struct {", "type GetItemsOperationResponse struct {", "type GetItemsCompleteResult struct {", "type Option = client.Option", "func IsNotFound(err error) bool { return client.IsNotFound(err) }", "func New(baseURL, token string, opts ...client.Option) (*client.Client, error) {", "return service.New(baseURL, client.Bearer(token), opts...)"} {
+		if !strings.Contains(root, want) {
+			t.Errorf("the types package lacks %q", want)
+		}
+	}
+
+	// a tag's package has the method, naming the types as the root's, and nothing a caller names
+	method := read(t, dir, "items/method_getitems.go")
+	for _, want := range []string{"package items", `"github.com/katbyte/pandorest/generator/testdata/mini"`, "func (c Client) GetItems(ctx context.Context, options ...mini.GetItemsOptions) (result mini.GetItemsOperationResponse, err error) {", "func (c Client) GetItemsComplete(", "var model mini.QueryResult"} {
+		if !strings.Contains(method, want) {
+			t.Errorf("items' method file lacks %q:\n%s", want, method)
+		}
+	}
+	if strings.Contains(method, "type GetItems") {
+		t.Errorf("items declares a type a caller would name:\n%s", method)
+	}
+	if doc := read(t, dir, "items/doc.go"); !generator.Generated([]byte(doc)) || strings.HasPrefix(doc, generator.Header) {
+		t.Errorf("items' doc.go is not the one file without the header:\n%s", doc)
+	}
+
+	// the client of every tag
+	aggregate := read(t, dir, "client/client.go")
+	for _, want := range []string{"package client", `base "github.com/katbyte/pandorest/client"`, "\tClient *base.Client\n", " items.Client\n", " images.Client\n", "func New(baseURL, token string, opts ...base.Option) (*Client, error) {", "c, err := mini.New(baseURL, token, opts...)", "items.NewClient(c),"} {
+		if !strings.Contains(aggregate, want) {
+			t.Errorf("client lacks %q:\n%s", want, aggregate)
+		}
+	}
+	if groups := read(t, dir, "groups.json"); !strings.Contains(groups, `"GetItems": "Items"`) || !strings.Contains(groups, `"GetItemsComplete": "Items"`) || !strings.Contains(groups, `"Package": "items"`) {
+		t.Errorf("groups.json:\n%s", groups)
+	}
+
+	// under a directory not named for the package (a version's), the types package is a directory of its own
+	versioned := generateInModule(t, svc, generator.Options{Grouped: true, ImportPath: "github.com/katbyte/pandorest/generator/testdata/mini", ClientService: "service", Packages: map[string]string{"Image": "images", "Sync": "syncs"}, Dir: filepath.Join("testdata", "1.0")})
+	for _, want := range []string{"mini/doc.go", "mini/model_item.go", "mini/client.go", "items/method_getitems.go", "client/client.go"} {
+		if _, err := os.Stat(filepath.Join(versioned, filepath.FromSlash(want))); err != nil {
+			t.Errorf("versioned: no %s", want)
+		}
+	}
+	if method := read(t, versioned, "items/method_getitems.go"); !strings.Contains(method, `"github.com/katbyte/pandorest/generator/testdata/mini/mini"`) {
+		t.Errorf("versioned: items does not import the types package under the version:\n%s", method)
+	}
+
+	// regenerating flat on top removes the packages, and grouped on top of flat the prefixed files
+	flat := generateInModule(t, svc, generator.Options{ClientService: "service"})
+	if _, err := os.Stat(filepath.Join(flat, "items")); err == nil {
+		t.Error("the items package survived a flat regeneration")
+	}
+}
+
+// writeServiceFile writes the hand-written file a generated package needs
+// beside it: the client.Service the constructor makes its client from.
+func writeServiceFile(t *testing.T, dir string) {
+	t.Helper()
+
+	if err := os.WriteFile(filepath.Join(dir, "service.go"), []byte("package mini\n\nimport \"github.com/katbyte/pandorest/client\"\n\nvar service = client.Service{Name: \"Mini\"}\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
 //nolint:paralleltest // writes the testdata package the other test would remove
 func TestGenerate(t *testing.T) {
 	dir := generateInModule(t, miniDefinitions(t), generator.Options{Notes: "Dates are strings.\n\nIds are too."})
@@ -258,8 +354,8 @@ func TestGenerate(t *testing.T) {
 			return out
 		}(), "\n")
 		for _, want := range []string{
-			"func (c Client) GetItems(ctx context.Context, options GetItemsOperationOptions) (result GetItemsOperationResponse, err error) {",
-			"func (c Client) GetItemsComplete(ctx context.Context, options GetItemsOperationOptions) (result GetItemsCompleteResult, err error) {",
+			"func (c Client) GetItems(ctx context.Context, options ...GetItemsOptions) (result GetItemsOperationResponse, err error) {",
+			"func (c Client) GetItemsComplete(ctx context.Context, options ...GetItemsOptions) (result GetItemsCompleteResult, err error) {",
 			"func (c Client) GetItem(ctx context.Context, itemId string) (result GetItemOperationResponse, err error) {",
 			"func (c Client) UpdateItem(ctx context.Context, itemId string, input Item) (result UpdateItemOperationResponse, err error) {",
 			"func (c Client) GetItemImage(ctx context.Context, itemId string, imageType Kind, index int) (result GetItemImageOperationResponse, err error) {",
@@ -357,6 +453,24 @@ func TestGenerate(t *testing.T) {
 			if _, err := os.Stat(path); err != nil {
 				t.Errorf("%s was removed: %v", path, err)
 			}
+		}
+	})
+
+	t.Run("hand-written file where a generated one goes refused", func(t *testing.T) {
+		svc := miniDefinitions(t)
+		doc := filepath.Join(dir, "doc.go")
+		manual := "// Package mini is written by hand.\npackage mini\n"
+		if err := os.WriteFile(doc, []byte(manual), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := generator.Generate(svc, generator.Options{Dir: dir, ClientImport: testClient}); err == nil || !strings.Contains(err.Error(), "doc.go is written by hand, and generation would overwrite it") {
+			t.Errorf("Generate over a hand-written doc.go = %v", err)
+		}
+		if got, err := os.ReadFile(doc); err != nil || string(got) != manual { //nolint:gosec // the test's own file
+			t.Errorf("the hand-written doc.go was changed: %q, %v", got, err)
+		}
+		if err := os.Remove(doc); err != nil {
+			t.Fatal(err)
 		}
 	})
 }
@@ -580,6 +694,69 @@ func TestNewInTheServicesWords(t *testing.T) {
 	}
 }
 
+// With InlineSingleOptions an operation with one option takes it as an
+// argument: variadic when optional, plain when required, a list as its
+// elements, the name kept clear of the body's own; a list that pages and an
+// operation with two keep their struct. The generated tests prove the wire.
+//
+//nolint:paralleltest // writes the testdata package the other tests would remove
+func TestInlineSingleOptions(t *testing.T) {
+	spec, err := openapi.Parse([]byte(`{"openapi": "3.0.1", "info": {"title": "Mini", "version": "1"}, "paths": {
+    "/lookup": {"get": {"operationId": "GetLookup", "tags": ["Items"], "parameters": [{"name": "term", "in": "query", "schema": {"type": "string"}}], "responses": {"200": {"content": {"application/json": {"schema": {"type": "object", "properties": {"name": {"type": "string"}}}}}}}}},
+    "/force": {"post": {"operationId": "PostForce", "tags": ["Items"], "parameters": [{"name": "forceSave", "in": "query", "schema": {"type": "boolean"}}], "responses": {"200": {"content": {"application/json": {"schema": {"type": "object", "properties": {"name": {"type": "string"}}}}}}}}},
+    "/season": {"get": {"operationId": "GetSeason", "tags": ["Items"], "parameters": [{"name": "seasonNumber", "in": "query", "required": true, "schema": {"type": "integer"}}], "responses": {"200": {"content": {"application/json": {"schema": {"type": "object", "properties": {"name": {"type": "string"}}}}}}}}},
+    "/byids": {"get": {"operationId": "GetByIds", "tags": ["Items"], "parameters": [{"name": "ids", "in": "query", "schema": {"type": "array", "items": {"type": "string"}}}], "responses": {"200": {"content": {"application/json": {"schema": {"type": "object", "properties": {"name": {"type": "string"}}}}}}}}},
+    "/typed": {"get": {"operationId": "GetTyped", "tags": ["Items"], "parameters": [{"name": "type", "in": "query", "schema": {"type": "string"}}], "responses": {"200": {"content": {"application/json": {"schema": {"type": "object", "properties": {"name": {"type": "string"}}}}}}}}},
+    "/reqids": {"get": {"operationId": "GetReqIds", "tags": ["Items"], "parameters": [{"name": "ids", "in": "query", "required": true, "schema": {"type": "array", "items": {"type": "string"}}}], "responses": {"200": {"content": {"application/json": {"schema": {"type": "object", "properties": {"name": {"type": "string"}}}}}}}}},
+    "/url": {"get": {"operationId": "GetUrl", "tags": ["Items"], "parameters": [{"name": "url", "in": "query", "schema": {"type": "string"}}], "responses": {"200": {"content": {"application/json": {"schema": {"type": "object", "properties": {"name": {"type": "string"}}}}}}}}},
+    "/pair": {"get": {"operationId": "GetPair", "tags": ["Items"], "parameters": [{"name": "a", "in": "query", "schema": {"type": "string"}}, {"name": "b", "in": "query", "schema": {"type": "string"}}], "responses": {"200": {"content": {"application/json": {"schema": {"type": "object", "properties": {"name": {"type": "string"}}}}}}}}}}}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	svc, err := importer.FromSpec(config.Service{Name: "mini", Package: "mini", Naming: config.OperationIDNaming, Auth: "APIKey"}, spec, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir := generateInModule(t, svc, generator.Options{InlineSingleOptions: true})
+	goTool(t, dir, "vet")
+	goTool(t, dir, "test")
+
+	for file, wants := range map[string][]string{
+		"items_method_getlookup.go": {"func (c Client) GetLookup(ctx context.Context, term ...string) (result GetLookupOperationResponse, err error) {", `err = fmt.Errorf("GetLookup takes one term at most, not %d", len(term))`, "option.Term = term[0]", "OptionsObject: option,"},
+		"items_method_postforce.go": {"func (c Client) PostForce(ctx context.Context, forceSave ...bool) (", "option.ForceSave = &forceSave[0]"},
+		"items_method_getseason.go": {"func (c Client) GetSeason(ctx context.Context, seasonNumber int) (", "option.SeasonNumber = &seasonNumber\n"},
+		"items_method_getbyids.go":  {"func (c Client) GetByIds(ctx context.Context, ids ...string) (", "if len(ids) > 0 {\n\t\toption.Ids = ids\n\t}"},
+		"items_method_gettyped.go":  {"func (c Client) GetTyped(ctx context.Context, typeOption ...string) ("},
+		"items_method_getreqids.go": {"func (c Client) GetReqIds(ctx context.Context, ids []string) (", "option.Ids = ids\n"},
+		"items_method_geturl.go":    {"func (c Client) GetUrl(ctx context.Context, urlOption ...string) ("},
+		"items_method_getpair.go":   {"func (c Client) GetPair(ctx context.Context, options ...GetPairOptions) ("},
+	} {
+		src := read(t, dir, file)
+		for _, want := range wants {
+			if !strings.Contains(src, want) {
+				t.Errorf("%s lacks %q:\n%s", file, want, src)
+			}
+		}
+	}
+}
+
+// A credential named by a phrase is an argument called credential, and the
+// phrase words the refusal.
+func TestCredentialPhrase(t *testing.T) {
+	t.Parallel()
+
+	files, err := generator.Render(miniDefinitions(t), generator.Options{ClientImport: testClient, Credential: "TMDB read access token or API key"}) //nolint:gosec // the name of a credential, not one
+	if err != nil {
+		t.Fatal(err)
+	}
+	client := string(files["client.go"])
+	for _, want := range []string{"func New(baseURL, credential string, opts ...client.Option) (*Client, error) {", `"TMDB read access token or API key is required"`} {
+		if !strings.Contains(client, want) {
+			t.Errorf("client.go has no %q:\n%s", want, client)
+		}
+	}
+}
+
 // serviceSource is the file a repository writes by hand beside its generated
 // package: what is the service's own about being talked to.
 const serviceSource = `package mini
@@ -618,17 +795,17 @@ func TestGenerateServiceOptions(t *testing.T) {
 
 	for file, wants := range map[string][]string{
 		"history_method_getseriesbyseriesidhistory.go": {
-			"func (c Client) GetSeriesBySeriesIdHistoryComplete(ctx context.Context, seriesId int, options GetSeriesBySeriesIdHistoryOperationOptions) (result GetSeriesBySeriesIdHistoryCompleteResult, err error) {",
+			"func (c Client) GetSeriesBySeriesIdHistoryComplete(ctx context.Context, seriesId int, options ...GetSeriesBySeriesIdHistoryOptions) (result GetSeriesBySeriesIdHistoryCompleteResult, err error) {",
 			"// GetSeriesBySeriesIdHistoryComplete calls GetSeriesBySeriesIdHistory page by page, from the\n// page options.Page names (the first when unset), until every result is loaded.\n// options.PageSize is the page size, client.DefaultPageSize when unset.",
-			"\tnumber := 1\n\tif options.Page != nil && *options.Page > 0 {\n\t\tnumber = *options.Page\n\t}\n\toptions.Page = &number\n",
+			"\tnumber := 1\n\tif option.Page != nil && *option.Page > 0 {\n\t\tnumber = *option.Page\n\t}\n\toption.Page = &number\n",
 			"if len(page.Model.Records) < limit || page.Model.TotalRecords > 0 && number*limit >= page.Model.TotalRecords {",
 			"\t\tnumber++\n",
 		},
 		"history_method_getseriesbyseriesidhistory_test.go": {
 			`c, starts := pagedServer(t, "page", "{}", tc.total, tc.pages)`,
-			`{"total reached", 2, 9, GetSeriesBySeriesIdHistoryOperationOptions{PageSize: new(1)}, 2, []string{"1", "2"}},`,
-			`{"empty page", 0, 2, GetSeriesBySeriesIdHistoryOperationOptions{PageSize: new(1)}, 2, []string{"1", "2", "3"}},`,
-			`{"short page", 0, 9, GetSeriesBySeriesIdHistoryOperationOptions{PageSize: new(2)}, 1, []string{"1"}},`,
+			`{"total reached", 2, 9, GetSeriesBySeriesIdHistoryOptions{PageSize: new(1)}, 2, []string{"1", "2"}},`,
+			`{"empty page", 0, 2, GetSeriesBySeriesIdHistoryOptions{PageSize: new(1)}, 2, []string{"1", "2", "3"}},`,
+			`{"short page", 0, 9, GetSeriesBySeriesIdHistoryOptions{PageSize: new(2)}, 1, []string{"1"}},`,
 		},
 		"client_test.go": {`fmt.Fprintf(w, "{\"records\":[%s],\"totalRecords\":%d}", item, total)`, "reporting total items, and records the page of\n// each request.", "\t\tif status >= http.StatusMultipleChoices && status < http.StatusBadRequest {\n\t\t\tw.Header().Set(\"Location\", \"/redirected\")\n\t\t}\n"},
 		// an operation whose documented answer is a redirect expects it, and its test proves the client hands it back unfollowed

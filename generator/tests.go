@@ -41,12 +41,41 @@ const undocumentedStatus = http.StatusTeapot
 // validation.
 func (g *gen) testHelpersFile() string {
 	helpers := operationServerHelpers
+	if g.opts.Grouped {
+		// a tag's client is made on a base client, not by New
+		helpers = strings.Replace(helpers, "(*Client, *operationServer)", "(Client, *operationServer)", 1)
+		helpers = strings.Replace(helpers, "\tc, err := New(s.URL, \"test-token\")\n\tif err != nil {\n\t\tt.Fatal(err)\n\t}\n", "\tbase, err := client.New(s.URL, client.Bearer(\"test-token\"))\n\tif err != nil {\n\t\tt.Fatal(err)\n\t}\n\tc := NewClient(base)\n", 1)
+	}
 	if g.redirects() {
 		// a redirect that is an operation's answer says where it sends its caller, and a client that followed it would ask the canned server twice
 		helpers = strings.Replace(helpers, "\t\tw.WriteHeader(status)\n", "\t\tif status >= http.StatusMultipleChoices && status < http.StatusBadRequest {\n\t\t\tw.Header().Set(\"Location\", \"/redirected\")\n\t\t}\n\t\tw.WriteHeader(status)\n", 1)
 	}
 
+	if g.opts.Grouped {
+		return g.fileHeader(helpers + g.pagedServerHelper())
+	}
+
 	return g.fileHeader(helpers + g.pagedServerHelper() + newTest)
+}
+
+// clientType is the type the test helpers hand out: a tag's Client by
+// value in the grouped layout, *Client in the flat one.
+func (g *gen) clientType() string {
+	if g.opts.Grouped {
+		return "Client"
+	}
+
+	return "*Client"
+}
+
+// newTestClient makes the client the test helpers hand out, on a canned
+// server's URL.
+func (g *gen) newTestClient(urlExpr string) string {
+	if g.opts.Grouped {
+		return "\tbase, err := client.New(" + urlExpr + ", client.Bearer(\"test-token\"))\n\tif err != nil {\n\t\tt.Fatal(err)\n\t}\n\tc := NewClient(base)\n"
+	}
+
+	return "\tc, err := New(" + urlExpr + ", \"test-token\")\n\tif err != nil {\n\t\tt.Fatal(err)\n\t}\n"
 }
 
 // redirects reports whether any operation of the service answers a redirect:
@@ -151,7 +180,7 @@ func (g *gen) pagedServerHelper() string {
 	return `// pagedServer answers the first pages requests with one item each and an
 // empty list after, reporting total items, and records the ` + records + ` of
 // each request.
-func pagedServer(t *testing.T, startIndex, item string, total, pages int) (*Client, *[]string) {
+func pagedServer(t *testing.T, startIndex, item string, total, pages int) (` + g.clientType() + `, *[]string) {
 	t.Helper()
 
 	var starts []string
@@ -164,11 +193,7 @@ func pagedServer(t *testing.T, startIndex, item string, total, pages int) (*Clie
 		_, _ = fmt.Fprintf(w, ` + answer + `, item, total)
 	}))
 	t.Cleanup(srv.Close)
-	c, err := New(srv.URL, "test-token")
-	if err != nil {
-		t.Fatal(err)
-	}
-	c.Client.HTTPClient = srv.Client()
+` + g.newTestClient("srv.URL") + `	c.Client.HTTPClient = srv.Client()
 
 	return c, &starts
 }
@@ -251,6 +276,26 @@ func (g *gen) testFile(o *definitions.Operation) string {
 	fmt.Fprintf(&b, "\tc, _ = newOperationServer(t, %d, \"text/plain\", \"no\")\n", undocumentedStatus)
 	fmt.Fprintf(&b, "\tresult, err = %s\n", call.expr)
 	fmt.Fprintf(&b, "\tif client.StatusCode(err) != %d || result.HttpResponse == nil {\n\t\tt.Errorf(\"an undocumented status = %%v, %%+v\", err, result.HttpResponse)\n\t}\n", undocumentedStatus)
+
+	// options that may all be left out may be: the call goes without them, and more than one is refused unsent
+	switch {
+	case g.optional(o):
+		without := strings.Join(call.args[:len(call.args)-1], ", ")
+		b.WriteString("\n\t// the options may be left out, and two are refused before any request\n")
+		fmt.Fprintf(&b, "\tc, s = newOperationServer(t, %d, %q, %q)\n", status, contentType, body)
+		fmt.Fprintf(&b, "\tif _, err = c.%s(%s); err != nil {\n\t\tt.Errorf(\"without options = %%v\", err)\n\t}\n", o.Name, without)
+		fmt.Fprintf(&b, "\tif _, err = c.%s(%s, %s{}, %s{}); err == nil || len(s.requests) != 1 {\n\t\tt.Errorf(\"two options structs = %%v, %%d requests\", err, len(s.requests))\n\t}\n", o.Name, without, g.typeName(o.Name+"Options"), g.typeName(o.Name+"Options"))
+	case g.inline(o) && !o.Options[0].Required:
+		without := strings.Join(call.args[:len(call.args)-len(call.inlined)], ", ")
+		b.WriteString("\n\t// the option may be left out, and then nothing is sent for it\n")
+		fmt.Fprintf(&b, "\tc, s = newOperationServer(t, %d, %q, %q)\n", status, contentType, body)
+		fmt.Fprintf(&b, "\tif _, err = c.%s(%s); err != nil {\n\t\tt.Errorf(\"without the option = %%v\", err)\n\t}\n", o.Name, without)
+		fmt.Fprintf(&b, "\tif r, _ := s.only(t); r.URL.RawQuery != \"\" || r.Header.Get(%q) != \"\" {\n\t\tt.Errorf(\"without the option, sent %%q and %%q\", r.URL.RawQuery, r.Header.Get(%q))\n\t}\n", o.Options[0].Name, o.Options[0].Name)
+		if o.Options[0].Type.Type != definitions.List {
+			b.WriteString("\t// two values are refused before any request\n")
+			fmt.Fprintf(&b, "\tif _, err = c.%s(%s, %s, %s); err == nil || len(s.requests) != 1 {\n\t\tt.Errorf(\"two values = %%v, %%d requests\", err, len(s.requests))\n\t}\n", o.Name, without, call.inlined[0], call.inlined[0])
+		}
+	}
 	b.WriteString("}\n")
 
 	if o.Pageable != nil {
@@ -268,8 +313,29 @@ type testCallInfo struct {
 	query    []wireValue
 	headers  []wireHeader
 	bodyType string
-	options  string // the options literal, or ""
+	options  string   // the options literal, or ""
+	inlined  []string // the arguments an inlined option went as, in place of the literal
 	optNames map[string]string
+}
+
+// sampleValue is an inlined option's sample as arguments: the value the
+// struct's sample pointed at, an optional list's elements one by one, a
+// required list as the slice.
+func (g *gen) sampleValue(opt *definitions.Option) []string {
+	if opt.Type.Type == definitions.List {
+		items, _ := g.sampleList(*opt.Type.NestedItem)
+		if opt.Required {
+			return []string{g.goType(opt.Type) + "{" + items + "}"}
+		}
+
+		return strings.Split(items, ", ")
+	}
+	expr, _, _ := g.sampleOption(*opt)
+	if inner, ok := strings.CutPrefix(expr, "new("); ok {
+		expr = strings.TrimSuffix(inner, ")")
+	}
+
+	return []string{expr}
 }
 
 type wireValue struct {
@@ -321,11 +387,16 @@ func (g *gen) testCall(o *definitions.Operation) testCallInfo {
 				info.query = append(info.query, wireValue{opt.Name, wire})
 			}
 		}
-		info.options = o.Name + "OperationOptions{}"
+		info.options = g.typeName(o.Name) + "Options{}"
 		if len(fields) > 0 {
-			info.options = o.Name + "OperationOptions{\n\t\t" + strings.Join(fields, ",\n\t\t") + ",\n\t}"
+			info.options = g.typeName(o.Name) + "Options{\n\t\t" + strings.Join(fields, ",\n\t\t") + ",\n\t}"
 		}
 		args = append(args, info.options)
+	}
+	if g.inline(o) {
+		// the one option goes as an argument: the sample value itself, a list as its elements
+		info.inlined = g.sampleValue(&o.Options[0])
+		args = append(args[:len(args)-1], info.inlined...)
 	}
 	info.args = args
 	info.expr = "c." + o.Name + "(" + strings.Join(args, ", ") + ")"
@@ -342,7 +413,7 @@ func (g *gen) samplePath(p definitions.PathParameter) (expr, wire string) {
 		return "1.5", "1.5"
 	case definitions.Reference:
 		if c := g.constants[p.Type.ReferenceName]; c != nil && len(c.Values) > 0 {
-			return c.Values[0].Name, url.PathEscape(c.Values[0].Value)
+			return g.typeName(c.Values[0].Name), url.PathEscape(c.Values[0].Value)
 		}
 	default:
 	}
@@ -371,7 +442,7 @@ func (g *gen) sampleOption(opt definitions.Option) (expr string, wire []string, 
 		return strconv.Quote(value), []string{value}, true
 	case definitions.Reference:
 		if c := g.constants[opt.Type.ReferenceName]; c != nil && len(c.Values) > 0 {
-			return c.Values[0].Name, []string{c.Values[0].Value}, true
+			return g.typeName(c.Values[0].Name), []string{c.Values[0].Value}, true
 		}
 		return "", nil, false
 	case definitions.Dictionary:
@@ -407,7 +478,7 @@ func (g *gen) sampleList(item definitions.TypeRef) (items string, values []strin
 			return "", nil
 		}
 		last := c.Values[len(c.Values)-1]
-		return c.Values[0].Name + ", " + last.Name, []string{c.Values[0].Value, last.Value}
+		return g.typeName(c.Values[0].Name) + ", " + g.typeName(last.Name), []string{c.Values[0].Value, last.Value}
 	default:
 		return "", nil
 	}
@@ -420,12 +491,12 @@ func (g *gen) sampleBody(t definitions.TypeRef) string {
 		return g.goType(t) + "{}"
 	case definitions.Reference:
 		if c := g.constants[t.ReferenceName]; c != nil && len(c.Values) > 0 {
-			return c.Values[0].Name
+			return g.typeName(c.Values[0].Name)
 		}
 		if m := g.models[t.ReferenceName]; m != nil && len(m.Union) > 0 {
-			return t.ReferenceName + `("{}")`
+			return g.typeName(t.ReferenceName) + `("{}")`
 		}
-		return t.ReferenceName + "{}"
+		return g.typeName(t.ReferenceName) + "{}"
 	default:
 		return `json.RawMessage("{}")`
 	}
@@ -521,7 +592,7 @@ func (g *gen) completeTest(o *definitions.Operation, call testCallInfo) string {
 		args += ", "
 	}
 	options := func(limit int) string {
-		return fmt.Sprintf("%sOperationOptions{%s: new(%d)}", o.Name, p.LimitOption, limit)
+		return fmt.Sprintf("%sOptions{%s: new(%d)}", g.typeName(o.Name), p.LimitOption, limit)
 	}
 
 	var b strings.Builder
@@ -529,7 +600,7 @@ func (g *gen) completeTest(o *definitions.Operation, call testCallInfo) string {
 	b.WriteString("\t// the three ways a walk ends: the total is reached, an empty page when the\n")
 	b.WriteString("\t// server reports no total, and a page shorter than the limit\n")
 	b.WriteString("\tfor _, tc := range []struct {\n\t\tname          string\n\t\ttotal, pages  int\n\t\toptions       ")
-	fmt.Fprintf(&b, "%sOperationOptions\n\t\titems         int\n\t\tstarts        []string\n\t}{\n", o.Name)
+	fmt.Fprintf(&b, "%sOptions\n\t\titems         int\n\t\tstarts        []string\n\t}{\n", g.typeName(o.Name))
 	// a walk by index starts with no index and goes on from the count it
 	// has; one by page asks for the first page and then the next
 	starts := []string{`"", "1"`, `"", "1", "2"`, `""`}
