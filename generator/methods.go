@@ -307,7 +307,8 @@ func (g *gen) appendOption(o *definitions.Operation, opt definitions.Option) str
 			return fmt.Sprintf("\tfor _, v := range %s {\n\t\tout.Append(%q, %s)\n\t}\n", field, opt.Name, item)
 		}
 		cond, value = "len("+field+") > 0", "client.CSV("+field+")"
-		if t.NestedItem.Type == definitions.ID {
+		if t.NestedItem.Type == definitions.ID || t.NestedItem.Type == definitions.Reference {
+			// a list of a named type, an id or an enum: joined by its text
 			value = "client.Joined(" + field + ")"
 		}
 	case definitions.Dictionary:

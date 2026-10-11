@@ -604,3 +604,77 @@ func placesWord(n int) string {
 
 	return fmt.Sprintf("%d places", n)
 }
+
+// Joined is what JoinedLists declares a string parameter to carry: a list of
+// Of, an enum schema's name or "string", sent as one comma-joined value.
+// In narrows it to some operations ("GET /Items"); empty is every
+// operation that takes the parameter.
+type Joined struct {
+	Of string
+	In []string
+}
+
+// JoinedLists is for the parameters a document declares as one string that
+// the server reads as several values joined by commas (Emby's
+// IncludeItemTypes), so that the package takes a list, of an enum or of
+// strings, and a caller hands two servers the same list where one takes it
+// joined and the other repeated. It fails for a name no plain string
+// parameter has, an Of that is not an enum schema of the document or
+// "string", and an In that matches nothing.
+func JoinedLists(about About, lists map[string]Joined) Workaround {
+	return readyMade{about, func(spec *openapi.Spec, note func(string)) error {
+		if len(lists) == 0 {
+			return errors.New("it names no parameters")
+		}
+		for _, name := range openapi.SortedKeys(lists) {
+			j := lists[name]
+			item := &openapi.Schema{Type: openapi.TypeString}
+			if j.Of != "string" {
+				e := spec.Components.Schemas[j.Of]
+				if e == nil || !e.IsEnum() {
+					return fmt.Errorf("%s: Of %q is not an enum schema of the document, or \"string\"", name, j.Of)
+				}
+				item = &openapi.Schema{Ref: openapi.SchemaRefPrefix + j.Of}
+			}
+			marked, inUsed := 0, make([]bool, len(j.In))
+			for _, path := range openapi.SortedKeys(spec.Paths) {
+				p := spec.Paths[path]
+				for method, op := range map[string]*openapi.Operation{"GET": p.Get, "POST": p.Post, "PUT": p.Put, "DELETE": p.Delete, "PATCH": p.Patch} {
+					if op == nil {
+						continue
+					}
+					where := method + " " + path
+					in := -1
+					if len(j.In) > 0 {
+						in = slices.IndexFunc(j.In, func(entry string) bool { return openapi.PlaceOf(entry).Matches(where, name) })
+						if in < 0 {
+							continue
+						}
+					}
+					for _, prm := range op.Parameters {
+						if !strings.EqualFold(prm.Name, name) || prm.In != openapi.InQuery || prm.Schema == nil || prm.Schema.Type != openapi.TypeString || prm.Schema.IsEnum() {
+							continue
+						}
+						prm.Schema = &openapi.Schema{Type: openapi.TypeArray, Items: item, Description: prm.Schema.Description}
+						prm.Explode = new(false)
+						marked++
+						if in >= 0 {
+							inUsed[in] = true
+						}
+					}
+				}
+			}
+			for i, used := range inUsed {
+				if !used {
+					return fmt.Errorf("%s: In %q matches no operation", name, j.In[i])
+				}
+			}
+			if marked == 0 {
+				return fmt.Errorf("no plain string parameter is called %s", name)
+			}
+			note(fmt.Sprintf("%s as a list of %s in %s", name, j.Of, placesWord(marked)))
+		}
+
+		return nil
+	}}
+}

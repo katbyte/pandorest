@@ -16,7 +16,7 @@ import (
 const buggy = `{"openapi": "3.0.1", "info": {"title": "Buggy", "version": "1"}, "paths": {
   "/": {"get": {"operationId": "Page", "tags": ["Web"], "responses": {"200": {}}}},
   "/Things": {
-    "get": {"operationId": "GetThings", "tags": ["Things"], "responses": {"200": {}}},
+    "get": {"operationId": "GetThings", "tags": ["Things"], "parameters": [{"name": "kinds", "in": "query", "schema": {"type": "string"}}, {"name": "names", "in": "query", "schema": {"type": "string"}}], "responses": {"200": {}}},
     "post": {"operationId": "CreateThing", "tags": ["Things"], "responses": {"200": {"content": {"application/json": {"schema": {"$ref": "#/components/schemas/Thing"}}}}}}},
   "/Things/bulk": {"put": {"operationId": "UpdateThings", "tags": ["Things"], "responses": {"200": {"content": {
     "text/plain": {"schema": {"$ref": "#/components/schemas/Thing"}},
@@ -29,7 +29,8 @@ const buggy = `{"openapi": "3.0.1", "info": {"title": "Buggy", "version": "1"}, 
   "/Ping": {"get": {"operationId": "Ping", "tags": ["System"], "responses": {"200": {}}}},
   "/Version": {"get": {"operationId": "GetVersion", "tags": ["System"], "responses": {"200": {"content": {"text/plain": {"schema": {"type": "string"}}}}}}}},
   "components": {"schemas": {"Thing": {"type": "object", "properties": {"id": {"type": "integer"}, "createdAt": {"type": "string"}, "seenAt": {"type": "string", "format": "date-time"}, "born": {"type": "string"}, "stamp": {"type": "integer"}, "status": {"type": "string"}, "details": {"type": "object", "properties": {"status": {"type": "string"}}}}},
-    "Note": {"type": "object", "properties": {"createdAt": {"type": "string"}}}}}}`
+    "Note": {"type": "object", "properties": {"createdAt": {"type": "string"}}},
+    "Kind": {"type": "string", "enum": ["movie", "show"]}}}}`
 
 func loadBuggy(string) (*openapi.Spec, error) { return openapi.Parse([]byte(buggy)) }
 
@@ -63,6 +64,7 @@ func readyMade() []workarounds.Workaround {
 		}),
 		workarounds.UndeclaredDatesExcept(about("thing-dates", "a thing's createdAt is declared a plain string; the server writes a date-time, but a note's createdAt is who wrote it"), map[string][]string{"Note": {"createdAt"}}, "createdAt"),
 		workarounds.UndeclaredUnixDates(about("thing-stamp", "a thing's stamp is declared an integer; the server writes seconds since 1970"), "seconds", "stamp"),
+		workarounds.JoinedLists(about("thing-lists", "kinds and names are declared one string; the server reads each as several joined by commas"), map[string]workarounds.Joined{"kinds": {Of: "Kind", In: []string{"GET /Things"}}, "names": {Of: "string"}}),
 		workarounds.UndeclaredEnums(about("thing-status", "a thing's status is declared a plain string; the server writes one of three, where its details' status is free text"), map[string]workarounds.Enum{"status": {Name: "ThingStatus", Values: []string{"new", "done", "gone"}, In: []string{"Thing .status"}}}),
 		workarounds.UndeclaredDays(about("thing-days", "a thing's born is declared a plain string; the server writes a day"), "born"),
 	}
@@ -83,7 +85,7 @@ func TestReadyMade(t *testing.T) {
 	}
 	var logged []string
 	applied, err := workarounds.Apply(readyMade(), "buggy", spec, func(msg string) { logged = append(logged, msg) })
-	if err != nil || len(applied) != 10 || applied[0] != "buggy-ui-routes" {
+	if err != nil || len(applied) != 11 || applied[0] != "buggy-ui-routes" {
 		t.Fatalf("Apply = %v, %v", applied, err)
 	}
 	for _, want := range []string{"buggy: applied workaround buggy-thing-dates: createdAt in 1 place", "buggy: applied workaround buggy-thing-days: born in 1 place", "buggy: applied workaround buggy-thing-status: status as ThingStatus in 1 place", "buggy: applied workaround buggy-ui-routes"} {
@@ -116,6 +118,14 @@ func TestReadyMade(t *testing.T) {
 	}
 	if nested := spec.Components.Schemas["Thing"].Properties["details"].Properties["status"]; nested.RefName() != "" || nested.Type != openapi.TypeString {
 		t.Errorf("the details' status, outside In, was declared the enum: %+v", nested)
+	}
+	for _, prm := range spec.Operation("GET", "/Things").Parameters {
+		switch {
+		case prm.Name == "kinds" && (prm.Schema.Type != openapi.TypeArray || prm.Schema.Items.RefName() != "Kind" || prm.Exploded()):
+			t.Errorf("kinds is not a joined list of Kind: %+v", prm.Schema)
+		case prm.Name == "names" && (prm.Schema.Type != openapi.TypeArray || prm.Schema.Items.Type != openapi.TypeString || prm.Exploded()):
+			t.Errorf("names is not a joined list of strings: %+v", prm.Schema)
+		}
 	}
 	if note := spec.Components.Schemas["Note"].Properties; note["createdAt"].Format != "" {
 		t.Errorf("the excepted createdAt was declared a date: %q", note["createdAt"].Format)
@@ -190,6 +200,10 @@ func TestReadyMadeFailures(t *testing.T) {
 		{"an exception that excludes nothing", workarounds.UndeclaredDatesExcept(a, map[string][]string{"GET /Things": {"createdAt"}}, "createdAt"), "GET /Things has no string called createdAt to leave alone"},
 		{"an epoch no integer property is called", workarounds.UndeclaredUnixDates(a, "seconds", "createdAt"), "no integer property or parameter is called createdAt"},
 		{"an epoch in no known unit", workarounds.UndeclaredUnixDates(a, "minutes", "stamp"), `unit "minutes" is not seconds or milliseconds`},
+		{"a joined list no parameter has", workarounds.JoinedLists(a, map[string]workarounds.Joined{"ghosts": {Of: "string"}}), "no plain string parameter is called ghosts"},
+		{"a joined list of what is not an enum", workarounds.JoinedLists(a, map[string]workarounds.Joined{"kinds": {Of: "Thing"}}), `kinds: Of "Thing" is not an enum schema of the document, or "string"`},
+		{"a joined list in an operation that has none", workarounds.JoinedLists(a, map[string]workarounds.Joined{"kinds": {Of: "Kind", In: []string{"GET /Stats"}}}), `kinds: In "GET /Stats" matches no operation`},
+		{"no joined lists", workarounds.JoinedLists(a, nil), "it names no parameters"},
 		{"an enum no string property is called", workarounds.UndeclaredEnums(a, map[string]workarounds.Enum{"mode": {Values: []string{"a"}}}), "no plain string property or parameter is called mode"},
 		{"an enum with no values", workarounds.UndeclaredEnums(a, map[string]workarounds.Enum{"status": {}}), "status has no values"},
 		{"an enum named for another schema", workarounds.UndeclaredEnums(a, map[string]workarounds.Enum{"status": {Name: "Thing", Values: []string{"a"}}}), "schema Thing exists and is not this enum"},
