@@ -403,3 +403,99 @@ func NotAPI(about About, paths ...string) Workaround {
 		return nil
 	}}
 }
+
+// UndeclaredDates is for the dates a document declares as plain strings
+// (Dockhand's createdAt, startedAt, expiresAt), so that nothing marks them
+// for the service's Dates: every string property with one of the names,
+// wherever it sits in the document, is declared a date-time. It fails for a
+// name no string property has, which is how a field the server renames is
+// noticed, and for one every property of which is declared a date now.
+func UndeclaredDates(about About, names ...string) Workaround {
+	return declareDates(about, "date-time", nil, names)
+}
+
+// UndeclaredDays is UndeclaredDates for a day without a time (TMDB's
+// release_date, written 2006-01-02), declared a date.
+func UndeclaredDays(about About, names ...string) Workaround {
+	return declareDates(about, "date", nil, names)
+}
+
+// UndeclaredDatesExcept is UndeclaredDates for a name that is a date
+// everywhere but in some places, where the same name is a string of
+// something else: except says, by operation ("GET /api/audit") or component
+// schema ("Note"), which of the names to leave alone there. It fails for an
+// exception that excludes nothing, which is how a document that changed is
+// noticed.
+func UndeclaredDatesExcept(about About, except map[string][]string, names ...string) Workaround {
+	return declareDates(about, "date-time", except, names)
+}
+
+// UndeclaredDaysExcept is UndeclaredDatesExcept for days.
+func UndeclaredDaysExcept(about About, except map[string][]string, names ...string) Workaround {
+	return declareDates(about, "date", except, names)
+}
+
+// UndeclaredUnixDates is for the dates a document declares as integers, which
+// are seconds or milliseconds since 1970 (unit "seconds" or "milliseconds"):
+// every integer property with one of the names is declared one, for the
+// generated Unix or UnixMilli, which reads a number and writes one back. A
+// document never declares an epoch, so this is the only way a field becomes
+// one. It fails as UndeclaredDates does.
+func UndeclaredUnixDates(about About, unit string, names ...string) Workaround {
+	format, ok := map[string]string{"seconds": openapi.FormatUnixSeconds, "milliseconds": openapi.FormatUnixMillis}[unit]
+	if !ok {
+		return readyMade{about, func(*openapi.Spec) error { return fmt.Errorf("unit %q is not seconds or milliseconds", unit) }}
+	}
+
+	return declare(about, openapi.TypeInteger, format, nil, names)
+}
+
+// declareDates marks every string property of the names a date of the format given.
+func declareDates(about About, format string, except map[string][]string, names []string) Workaround {
+	return declare(about, openapi.TypeString, format, except, names)
+}
+
+// declare marks every property of the names that has the type given with the format, except where
+// except says not to, and fails for a name that marks nothing or an exception that excludes nothing.
+func declare(about About, typ, format string, except map[string][]string, names []string) Workaround {
+	return readyMade{about, func(spec *openapi.Spec) error {
+		if len(names) == 0 {
+			return errors.New("it names no properties")
+		}
+		marked, declared, excluded := map[string]int{}, map[string]int{}, map[string]int{}
+		spec.EachSchema(func(where, property string, s *openapi.Schema) {
+			if property == "" || s.Type != typ || !slices.Contains(names, property) {
+				return
+			}
+			if slices.Contains(except[where], property) {
+				excluded[where+" "+property]++
+
+				return
+			}
+			if s.Format != "" {
+				declared[property]++
+
+				return
+			}
+			s.Format = format
+			marked[property]++
+		})
+		for _, name := range names {
+			switch {
+			case marked[name] == 0 && declared[name] > 0:
+				return fmt.Errorf("every %s is declared a %s now", name, format)
+			case marked[name] == 0:
+				return fmt.Errorf("no %s property or parameter is called %s", typ, name)
+			}
+		}
+		for _, where := range openapi.SortedKeys(except) {
+			for _, name := range except[where] {
+				if excluded[where+" "+name] == 0 {
+					return fmt.Errorf("%s has no %s called %s to leave alone", where, typ, name)
+				}
+			}
+		}
+
+		return nil
+	}}
+}

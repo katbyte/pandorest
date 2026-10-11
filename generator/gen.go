@@ -21,6 +21,7 @@ import (
 type gen struct {
 	svc       *definitions.Service
 	opts      Options
+	kinds     map[definitions.ObjectType]bool
 	models    map[string]*definitions.Model
 	constants map[string]*definitions.Constant
 	// paged is the service's first list operation, which says how its lists
@@ -74,6 +75,7 @@ func newGen(svc *definitions.Service, opts Options) (*gen, error) {
 			break
 		}
 	}
+	g.kinds = kindsUsed(svc)
 
 	if opts.Client != "" && (opts.Credential != "" || opts.NewDoc != "") {
 		return nil, fmt.Errorf("%s: its config words the default client.go's New (Credential, NewDoc) and gives a Client of its own as well, which has its own words: drop one or the other", svc.Name)
@@ -249,6 +251,14 @@ func (g *gen) goType(t definitions.TypeRef) string {
 		return "float64"
 	case definitions.String:
 		return "string"
+	case definitions.DateTime:
+		return g.typeName("Time")
+	case definitions.Date:
+		return g.typeName("Day")
+	case definitions.UnixSeconds:
+		return g.typeName("Unix")
+	case definitions.UnixMillis:
+		return g.typeName("UnixMilli")
 	case definitions.Any:
 		return "any"
 	case definitions.RawObject:
@@ -304,7 +314,7 @@ func fieldTag(m *definitions.Model, f *definitions.Field) string {
 		return f.JSONName
 	}
 	switch f.Type.Type {
-	case definitions.List, definitions.Dictionary:
+	case definitions.List, definitions.Dictionary, definitions.DateTime, definitions.Date, definitions.UnixSeconds, definitions.UnixMillis:
 		return f.JSONName + ",omitzero"
 	case definitions.String, definitions.Integer, definitions.Integer64, definitions.Float, definitions.Double:
 		// a number or string whose null is kept is a pointer, and its nil is left out
@@ -339,6 +349,7 @@ func (g *gen) fileHeader(body string) string {
 		{"strconv", "strconv."},
 		{"strings", "strings."},
 		{"testing", "testing."},
+		{"time", "time."},
 	} {
 		if usesPackage(body, imp.use) {
 			std = append(std, imp.path)
@@ -634,4 +645,44 @@ func (g *gen) docFile() string {
 	fmt.Fprintf(&b, "package %s\n", g.svc.Package)
 
 	return b.String()
+}
+
+// kindsUsed is every type a service's fields, options, path parameters and bodies are of, so that a
+// type the package declares only when something is of it (Unix, UnixMilli) is declared then.
+func kindsUsed(svc *definitions.Service) map[definitions.ObjectType]bool {
+	kinds := map[definitions.ObjectType]bool{}
+	var note func(t definitions.TypeRef)
+	note = func(t definitions.TypeRef) {
+		kinds[t.Type] = true
+		if t.NestedItem != nil {
+			note(*t.NestedItem)
+		}
+	}
+	for _, m := range svc.Models() {
+		for i := range m.Fields {
+			note(m.Fields[i].Type)
+		}
+	}
+	for _, o := range svc.Operations() {
+		for i := range o.Options {
+			note(o.Options[i].Type)
+		}
+		for i := range o.PathParameters {
+			note(o.PathParameters[i].Type)
+		}
+		if o.Request != nil {
+			note(o.Request.Type)
+		}
+		if o.Response != nil {
+			note(o.Response.Type)
+		}
+	}
+
+	return kinds
+}
+
+// datesFile reports whether the package declares a date type: Time or Day from the service's layouts,
+// Unix or UnixMilli from a field a workaround declared an epoch.
+func (g *gen) datesFile() bool {
+	return len(g.svc.Dates) > 0 || len(g.svc.Days) > 0 || g.kinds[definitions.UnixSeconds] || g.kinds[definitions.UnixMillis]
 }

@@ -76,6 +76,11 @@ func FromSpec(cfg config.Service, spec *openapi.Spec, applied []string, log func
 		Source:      cfg.Spec,
 		Auth:        cfg.Auth,
 		Workarounds: applied,
+		Dates:       cfg.Dates.Layouts(),
+		Days:        cfg.Days.Layouts(),
+
+		DatesKeepUnread: cfg.Dates.KeepUnread,
+		DaysKeepUnread:  cfg.Days.KeepUnread,
 	}
 	if svc.Workarounds == nil {
 		svc.Workarounds = []string{}

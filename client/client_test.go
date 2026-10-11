@@ -763,3 +763,35 @@ func TestParameterForms(t *testing.T) {
 		t.Errorf("JSONObject of what is not JSON = %q", got)
 	}
 }
+
+// A date is read in any of its layouts, null and "" are zero, and one no
+// layout reads is an error naming it and the layouts.
+func TestParseTime(t *testing.T) {
+	t.Parallel()
+
+	layouts := []string{"2006-01-02T15:04:05.0000000Z07:00", time.RFC3339}
+	for data, want := range map[string]string{`null`: "0001-01-01T00:00:00Z", `""`: "0001-01-01T00:00:00Z", `"2024-03-04T05:06:07.0000000Z"`: "2024-03-04T05:06:07Z", `"2024-03-04T05:06:07Z"`: "2024-03-04T05:06:07Z"} {
+		got, err := client.ParseTime([]byte(data), layouts)
+		if err != nil || got.Format(time.RFC3339) != want {
+			t.Errorf("ParseTime(%s) = %v, %v, want %s", data, got, err, want)
+		}
+	}
+	if _, err := client.ParseTime([]byte(`"04/03/2024"`), layouts); err == nil || !strings.Contains(err.Error(), `a date no layout reads: "04/03/2024" (layouts 2006-01-02T15:04:05.0000000Z07:00, 2006-01-02T15:04:05Z07:00)`) {
+		t.Errorf("a date in no layout = %v", err)
+	}
+	var unread *client.UnreadDateError
+	if _, err := client.ParseTime([]byte(`"04/03/2024"`), layouts); !errors.As(err, &unread) || unread.Text != "04/03/2024" {
+		t.Errorf("a date in no layout is not an UnreadDateError with its text: %v", err)
+	}
+	for data, want := range map[string]int64{`null`: 0, `0`: 0, `""`: 0, `1709528767`: 1709528767, `"1709528767"`: 1709528767} {
+		if got, err := client.ParseUnix([]byte(data)); err != nil || got != want {
+			t.Errorf("ParseUnix(%s) = %d, %v, want %d", data, got, err, want)
+		}
+	}
+	if _, err := client.ParseUnix([]byte(`"2024-03-04"`)); err == nil || !strings.Contains(err.Error(), "a date that is not a whole number of seconds or milliseconds") {
+		t.Errorf("an epoch that is a date string = %v", err)
+	}
+	if _, err := client.ParseTime([]byte(`7`), layouts); err == nil || !strings.Contains(err.Error(), "a date that is not a string: 7") {
+		t.Errorf("a number = %v", err)
+	}
+}

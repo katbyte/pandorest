@@ -157,6 +157,11 @@ func (g *gen) renderGrouped(add func(name, src string) error) error {
 	if err := add(root+"helpers.go", g.helpersFile()); err != nil {
 		return err
 	}
+	if g.datesFile() {
+		if err := add(root+"time.go", g.timeFile()); err != nil {
+			return err
+		}
+	}
 
 	// a package per tag
 	for gi := range g.svc.Groups {

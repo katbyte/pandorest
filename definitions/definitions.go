@@ -29,6 +29,14 @@ type Service struct {
 	Auth string `json:"Auth"`
 	// Workarounds lists the importer workarounds applied, in order.
 	Workarounds []string `json:"Workarounds"`
+	// Dates and Days are the layouts the service writes a date and time
+	// and a day in, first the one it is sent in; empty, dates are strings.
+	Dates []string `json:"Dates,omitempty"`
+	Days  []string `json:"Days,omitempty"`
+	// DatesKeepUnread and DaysKeepUnread read a date no layout reads as
+	// zero with its text kept, rather than failing the decode.
+	DatesKeepUnread bool `json:"DatesKeepUnread,omitempty"`
+	DaysKeepUnread  bool `json:"DaysKeepUnread,omitempty"`
 
 	Groups []Group `json:"-"`
 }
@@ -232,6 +240,16 @@ const (
 	RawObject  ObjectType = "RawObject"
 	Any        ObjectType = "Any"
 	RawFile    ObjectType = "RawFile"
+	// DateTime and Date are strings the document declares as a date and
+	// time or a day, held as the package's Time and Day when the service
+	// gives the layouts it writes them in (Service.Dates, Days).
+	DateTime ObjectType = "DateTime"
+	Date     ObjectType = "Date"
+	// UnixSeconds and UnixMillis are integers a workaround declares a date
+	// (seconds or milliseconds since 1970), held as the package's Unix and
+	// UnixMilli, which read a number and write one back.
+	UnixSeconds ObjectType = "UnixSeconds"
+	UnixMillis  ObjectType = "UnixMillis"
 )
 
 // TypeRef is the type of a field, parameter or body.

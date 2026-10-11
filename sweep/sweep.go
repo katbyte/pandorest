@@ -466,6 +466,11 @@ func setValue(v reflect.Value, value any) error {
 			return fmt.Errorf("cannot set %s from %q: %w", v.Type(), s, err)
 		}
 		v.Set(elem)
+	case reflect.Struct:
+		// a date (the package's Time or Day): decoded as the JSON string it is written as
+		if err := json.Unmarshal([]byte(strconv.Quote(s)), v.Addr().Interface()); err != nil {
+			return fmt.Errorf("cannot set %s from %q: %w", v.Type(), s, err)
+		}
 	case reflect.Slice:
 		parts := strings.Split(s, ",")
 		list := reflect.MakeSlice(v.Type(), len(parts), len(parts))
@@ -498,6 +503,51 @@ type answer struct {
 	// whole, and undeclared the keys it has no field for, as Model.key
 	dropped    []string
 	undeclared []string
+	// unread are the dates no layout read, which the model kept as text
+	unread []string
+}
+
+// unreadDate is what a generated Time or Day set to keep an unread date
+// answers it by.
+type unreadDate interface{ UnreadDate() string }
+
+// unreadDates walks a decoded model for the dates no layout read.
+func unreadDates(v reflect.Value, at string, found []string) []string {
+	if !v.IsValid() {
+		return found
+	}
+	if v.CanInterface() {
+		if u, ok := reflect.TypeAssert[unreadDate](v); ok {
+			if text := u.UnreadDate(); text != "" {
+				found = append(found, fmt.Sprintf("%s = %q", at, text))
+			}
+
+			return found
+		}
+	}
+	switch v.Kind() {
+	case reflect.Pointer, reflect.Interface:
+		if !v.IsNil() {
+			found = unreadDates(v.Elem(), at, found)
+		}
+	case reflect.Struct:
+		for i := range v.NumField() {
+			if v.Type().Field(i).IsExported() {
+				found = unreadDates(v.Field(i), at+"."+v.Type().Field(i).Name, found)
+			}
+		}
+	case reflect.Slice, reflect.Array:
+		for i := range v.Len() {
+			found = unreadDates(v.Index(i), fmt.Sprintf("%s[%d]", at, i), found)
+		}
+	case reflect.Map:
+		for _, k := range v.MapKeys() {
+			found = unreadDates(v.MapIndex(k), fmt.Sprintf("%s[%v]", at, k), found)
+		}
+	default:
+	}
+
+	return found
 }
 
 // call calls the operation, reads what it answered, and classifies a
@@ -626,6 +676,9 @@ func (s Sweep) check(out *Outcome, op *definitions.Operation, c Case, a answer) 
 	if s.Strict && len(a.undeclared) > 0 {
 		out.failf("%s answers fields the document does not declare: %s", op.Key(), strings.Join(a.undeclared, ", "))
 	}
+	for _, u := range a.unread {
+		out.failf("%s answers a date no layout reads: %s; add the layout to the service's Dates or Days", op.Key(), u)
+	}
 }
 
 // judgeJSON reads a JSON answer against the model it was decoded into.
@@ -641,6 +694,7 @@ func judgeJSON(body []byte, model reflect.Value) answer {
 		return a
 	}
 	a.dropped = dropped(sent, model, "the answer")
+	a.unread = unreadDates(model, "Model", nil)
 	if len(a.dropped) > maxDropped {
 		a.dropped = append(a.dropped[:maxDropped], fmt.Sprintf("%d more places", len(a.dropped)-maxDropped))
 	}

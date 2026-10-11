@@ -203,15 +203,12 @@ func (im *importer) pathParamType(s *openapi.Schema) definitions.TypeRef {
 	}
 	switch s.Type {
 	case openapi.TypeInteger:
-		if s.Format == "int64" {
-			return definitions.TypeRef{Type: definitions.Integer64}
-		}
-		return definitions.TypeRef{Type: definitions.Integer}
+		return integerType(s)
 	case openapi.TypeNumber:
 		return definitions.TypeRef{Type: definitions.Double}
 	}
 
-	return definitions.TypeRef{Type: definitions.String}
+	return im.stringType(s)
 }
 
 func (im *importer) optionType(s *openapi.Schema) definitions.TypeRef {
@@ -229,13 +226,12 @@ func (im *importer) optionType(s *openapi.Schema) definitions.TypeRef {
 		return str
 	}
 	switch s.Type {
+	case openapi.TypeString:
+		return im.stringType(s)
 	case openapi.TypeBoolean:
 		return definitions.TypeRef{Type: definitions.Boolean}
 	case openapi.TypeInteger:
-		if s.Format == "int64" {
-			return definitions.TypeRef{Type: definitions.Integer64}
-		}
-		return definitions.TypeRef{Type: definitions.Integer}
+		return integerType(s)
 	case openapi.TypeNumber:
 		return definitions.TypeRef{Type: definitions.Double}
 	case openapi.TypeArray:

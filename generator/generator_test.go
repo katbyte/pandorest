@@ -8,6 +8,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/katbyte/pandorest/config"
 	"github.com/katbyte/pandorest/definitions"
@@ -765,6 +766,150 @@ func TestPagerWithoutLimit(t *testing.T) {
 	for _, want := range []string{"func (c Client) GetPopularComplete(ctx context.Context, options ...GetPopularOptions) (result GetPopularCompleteResult, err error) {", "limit := 0\n", "if limit == 0 {\n\t\t\tlimit = len(page.Model.Results)\n\t\t}", "len(result.Items) >= page.Model.TotalResults"} {
 		if !strings.Contains(src, want) {
 			t.Errorf("the pager lacks %q:\n%s", want, src)
+		}
+	}
+}
+
+// A service that gives the layouts its dates are written in has them as Time
+// and Day: fields left out when zero, options sent in the first layout, and
+// the generated tests prove both on the wire.
+//
+//nolint:paralleltest // writes the testdata package the other tests would remove
+func TestDates(t *testing.T) {
+	spec, err := openapi.Parse([]byte(`{"openapi": "3.0.1", "info": {"title": "Mini", "version": "1"}, "paths": {
+    "/items": {"get": {"operationId": "GetItems", "tags": ["Items"], "parameters": [{"name": "since", "in": "query", "schema": {"type": "string", "format": "date-time"}}, {"name": "born", "in": "query", "schema": {"type": "string", "format": "date"}}],
+      "responses": {"200": {"content": {"application/json": {"schema": {"$ref": "#/components/schemas/Item"}}}}}}},
+    "/items/{when}": {"get": {"operationId": "GetItemAt", "tags": ["Items"], "parameters": [{"name": "when", "in": "path", "required": true, "schema": {"type": "string", "format": "date-time"}}],
+      "responses": {"200": {"content": {"application/json": {"schema": {"$ref": "#/components/schemas/Item"}}}}}}}},
+  "components": {"schemas": {"Item": {"type": "object", "properties": {"name": {"type": "string"}, "created": {"type": "string", "format": "date-time"}, "born": {"type": "string", "format": "date"}, "plain": {"type": "string"}}}}}}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg := config.Service{Name: "mini", Package: "mini", Naming: config.OperationIDNaming, Auth: "APIKey", Dates: config.Dates{Send: "2006-01-02T15:04:05.0000000Z07:00", Read: []string{time.RFC3339Nano}}, Days: config.Dates{Send: time.DateOnly}}
+	svc, err := importer.FromSpec(cfg, spec, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir := generateInModule(t, svc, generator.Options{ClientService: "service"})
+	writeServiceFile(t, dir)
+	// the service's own file may pick a layout per parameter; proven here before the parallel tests run
+	if err := os.WriteFile(filepath.Join(dir, "override_test.go"), []byte(`package mini
+
+import (
+	"testing"
+	"time"
+)
+
+//nolint:paralleltest // sets the service's hook, which the parallel tests must not see
+func TestSendDateAs(t *testing.T) {
+	service.SendDateAs = func(operation, parameter string) string {
+		if operation == "GetItems" && parameter == "since" {
+			return "2006-01-02"
+		}
+		return ""
+	}
+	defer func() { service.SendDateAs = nil }()
+
+	c, s := newOperationServer(t, 200, "application/json", "{}")
+	if _, err := c.GetItems(t.Context(), GetItemsOptions{Since: Time{Time: time.Date(2024, time.March, 4, 5, 6, 7, 0, time.UTC)}, Born: Day{Time: time.Date(2024, time.March, 4, 0, 0, 0, 0, time.UTC)}}); err != nil {
+		t.Fatal(err)
+	}
+	r, _ := s.only(t)
+	if got := r.URL.Query(); got.Get("since") != "2024-03-04" || got.Get("born") != "2024-03-04" {
+		t.Errorf("query = %q", r.URL.RawQuery)
+	}
+}
+`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	goTool(t, dir, "vet")
+	goTool(t, dir, "test")
+
+	for file, wants := range map[string][]string{
+		"time.go":                   {"type Time struct{ time.Time }", "func sendDateAs(operation, parameter string) string {", "if service.SendDateAs == nil {", "func (t Time) As(layout string) string {", "type Day struct{ time.Time }", `var timeLayouts = []string{"2006-01-02T15:04:05.0000000Z07:00", "2006-01-02T15:04:05.999999999Z07:00"}`, `var dayLayouts = []string{"2006-01-02"}`, "client.ParseTime(data, timeLayouts)"},
+		"items_model_item.go":       {"Created Time   `json:\"created,omitzero\"`", "Born    Day    `json:\"born,omitzero\"`", "Plain   string `json:\"plain,omitempty\"`"},
+		"items_method_getitems.go":  {"Since Time", "Born  Day", "if !o.Since.IsZero() {\n\t\tout.Append(\"since\", o.Since.As(sendDateAs(\"GetItems\", \"since\")))", "if !o.Born.IsZero() {\n\t\tout.Append(\"born\", o.Born.As(sendDateAs(\"GetItems\", \"born\")))"},
+		"items_method_getitemat.go": {"func (c Client) GetItemAt(ctx context.Context, when Time) (", "url.PathEscape(when.As(sendDateAs(\"GetItemAt\", \"when\")))"},
+	} {
+		src := read(t, dir, file)
+		for _, want := range wants {
+			if !strings.Contains(src, want) {
+				t.Errorf("%s lacks %q:\n%s", file, want, src)
+			}
+		}
+	}
+
+	// set to keep a date no layout reads, the type holds its text and the decode goes on
+	cfg.Dates.KeepUnread = true
+	svc, err = importer.FromSpec(cfg, spec, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir = generateInModule(t, svc, generator.Options{})
+	// without a service file of its own, the usual layout and no hook
+	if src := read(t, dir, "items_method_getitems.go"); !strings.Contains(src, `out.Append("since", o.Since.String())`) {
+		t.Errorf("without ClientService the query does not use the plain layout:\n%s", src)
+	}
+	goTool(t, dir, "vet")
+	goTool(t, dir, "test")
+	if src := read(t, dir, "time.go"); !strings.Contains(src, "\tUnread string\n") || !strings.Contains(src, "func (t Time) UnreadDate() string { return t.Unread }") || !strings.Contains(src, "if errors.As(err, &unread) {") || strings.Contains(src, "func (t Day) UnreadDate()") {
+		t.Errorf("time.go with KeepUnread on dates alone:\n%s", src)
+	}
+
+	// without the layouts, dates are the strings the document declares
+	svc, err = importer.FromSpec(config.Service{Name: "mini", Package: "mini", Naming: config.OperationIDNaming, Auth: "APIKey"}, spec, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	files, err := generator.Render(svc, generator.Options{ClientImport: testClient})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := files["time.go"]; ok || !strings.Contains(string(files["items_model_item.go"]), "Created string `json:\"created,omitempty\"`") {
+		t.Errorf("without layouts: time.go %v, model:\n%s", ok, files["items_model_item.go"])
+	}
+}
+
+// An integer a workaround declares an epoch is Unix or UnixMilli: a field
+// left out when zero, an option and a path parameter sent as the number, and
+// the generated tests prove both on the wire.
+//
+//nolint:paralleltest // writes the testdata package the other tests would remove
+func TestUnixDates(t *testing.T) {
+	spec, err := openapi.Parse([]byte(`{"openapi": "3.0.1", "info": {"title": "Mini", "version": "1"}, "paths": {
+    "/events": {"get": {"operationId": "GetEvents", "tags": ["Events"], "parameters": [{"name": "since", "in": "query", "schema": {"type": "integer"}}],
+      "responses": {"200": {"content": {"application/json": {"schema": {"$ref": "#/components/schemas/Event"}}}}}}},
+    "/events/{at}": {"get": {"operationId": "GetEventAt", "tags": ["Events"], "parameters": [{"name": "at", "in": "path", "required": true, "schema": {"type": "integer"}}],
+      "responses": {"200": {"content": {"application/json": {"schema": {"$ref": "#/components/schemas/Event"}}}}}}}},
+  "components": {"schemas": {"Event": {"type": "object", "properties": {"name": {"type": "string"}, "timestamp": {"type": "integer"}, "at": {"type": "integer"}, "since": {"type": "integer"}, "count": {"type": "integer"}}}}}}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := workarounds.UndeclaredUnixDates(workarounds.About{Name: "mini-epochs", Service: "mini", Bug: "epochs are declared integers"}, "seconds", "timestamp", "since").Apply(spec); err != nil {
+		t.Fatal(err)
+	}
+	if err := workarounds.UndeclaredUnixDates(workarounds.About{Name: "mini-millis", Service: "mini", Bug: "at is milliseconds"}, "milliseconds", "at").Apply(spec); err != nil {
+		t.Fatal(err)
+	}
+	svc, err := importer.FromSpec(config.Service{Name: "mini", Package: "mini", Naming: config.OperationIDNaming, Auth: "APIKey"}, spec, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir := generateInModule(t, svc, generator.Options{})
+	goTool(t, dir, "vet")
+	goTool(t, dir, "test")
+
+	for file, wants := range map[string][]string{
+		"time.go":                     {"type Unix struct{ time.Time }", "type UnixMilli struct{ time.Time }", "return json.Marshal(t.Unix())", "t.Time = time.UnixMilli(n).UTC()", "func (t Unix) String() string { return strconv.FormatInt(t.Unix(), 10) }"},
+		"events_model_event.go":       {"Timestamp Unix      `json:\"timestamp,omitzero\"`", "At        UnixMilli `json:\"at,omitzero\"`", "Count     int       `json:\"count,omitempty\"`"},
+		"events_method_getevents.go":  {"Since Unix", "if !o.Since.IsZero() {\n\t\tout.Append(\"since\", o.Since.String())"},
+		"events_method_geteventat.go": {"func (c Client) GetEventAt(ctx context.Context, at UnixMilli) (", "at.String())"},
+	} {
+		src := read(t, dir, file)
+		for _, want := range wants {
+			if !strings.Contains(src, want) {
+				t.Errorf("%s lacks %q:\n%s", file, want, src)
+			}
 		}
 	}
 }

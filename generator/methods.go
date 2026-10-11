@@ -141,7 +141,7 @@ func (g *gen) writeOptions(b *strings.Builder, o *definitions.Operation, options
 		fmt.Fprintf(b, "func (o %s) %s() *client.%s {\n\tout := client.%s{}\n", optionsType, in.method, in.typ, in.typ)
 		for _, opt := range o.Options {
 			if opt.In == in.where {
-				b.WriteString(appendOption(opt))
+				b.WriteString(g.appendOption(o, opt))
 			}
 		}
 		b.WriteString("\treturn &out\n}\n\n")
@@ -150,8 +150,9 @@ func (g *gen) writeOptions(b *strings.Builder, o *definitions.Operation, options
 
 // appendOption renders the statement that adds one option when it is set. A
 // list goes comma-separated or as one parameter per element, as the
-// document says.
-func appendOption(opt definitions.Option) string {
+// document says; a date goes in the layout the service's own file picks for
+// the parameter, when it has one to ask.
+func (g *gen) appendOption(o *definitions.Operation, opt definitions.Option) string {
 	field := "o." + opt.Field
 	var cond, value string
 	switch t := opt.Type; t.Type {
@@ -187,6 +188,10 @@ func appendOption(opt definitions.Option) string {
 		cond, value = "len("+field+") > 0", "client.JSONObject("+field+")"
 	case definitions.Reference:
 		cond, value = field+` != ""`, "string("+field+")"
+	case definitions.DateTime, definitions.Date:
+		cond, value = "!"+field+".IsZero()", field+g.dateAs(o, opt.Name)
+	case definitions.UnixSeconds, definitions.UnixMillis:
+		cond, value = "!"+field+".IsZero()", field+".String()"
 	default:
 		cond, value = field+` != ""`, field
 	}
@@ -196,7 +201,7 @@ func appendOption(opt definitions.Option) string {
 
 // pathExpression renders the path with each placeholder filled from its
 // escaped argument.
-func pathExpression(o *definitions.Operation) string {
+func (g *gen) pathExpression(o *definitions.Operation) string {
 	if len(o.PathParameters) == 0 {
 		return fmt.Sprintf("%q", o.Path)
 	}
@@ -226,6 +231,12 @@ func pathExpression(o *definitions.Operation) string {
 		case definitions.Reference:
 			format.WriteString("%s")
 			args = append(args, "url.PathEscape(string("+p.Argument+"))")
+		case definitions.DateTime, definitions.Date:
+			format.WriteString("%s")
+			args = append(args, "url.PathEscape("+p.Argument+g.dateAs(o, p.Name)+")")
+		case definitions.UnixSeconds, definitions.UnixMillis:
+			format.WriteString("%s")
+			args = append(args, p.Argument+".String()")
 		default:
 			format.WriteString("%s")
 			args = append(args, "url.PathEscape("+p.Argument+")")
@@ -418,7 +429,7 @@ func (g *gen) writeMethod(b *strings.Builder, o *definitions.Operation, response
 	if len(o.Options) > 0 {
 		fmt.Fprintf(b, "\t\tOptionsObject: %s,\n", g.optionsVar(o))
 	}
-	fmt.Fprintf(b, "\t\tPath: %s,\n", pathExpression(o))
+	fmt.Fprintf(b, "\t\tPath: %s,\n", g.pathExpression(o))
 	if o.Response != nil && o.Response.Type.Type == definitions.RawFile {
 		b.WriteString("\t\tStreamResponse: true,\n")
 	}
@@ -530,4 +541,14 @@ func (g *gen) writeCompleteMethod(b *strings.Builder, o *definitions.Operation, 
 		fmt.Fprintf(b, "\t\tif len(page.Model.%[1]s) < limit || page.Model.%[2]s > 0 && start >= page.Model.%[2]s {\n\t\t\treturn\n\t\t}\n", p.ItemsField, p.TotalField)
 	}
 	b.WriteString("\t}\n}\n")
+}
+
+// dateAs is the call that renders a date for one parameter: in the layout the
+// service's own file picks for it when there is one to ask, else the usual.
+func (g *gen) dateAs(o *definitions.Operation, parameter string) string {
+	if g.opts.ClientService == "" {
+		return ".String()"
+	}
+
+	return fmt.Sprintf(".As(sendDateAs(%q, %q))", o.Name, parameter)
 }

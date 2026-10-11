@@ -124,6 +124,12 @@ type Service struct {
 	// reached; a hosted API gives its whole address.
 	Example string
 
+	// SendDateAs picks the layout a date goes out in for one query or path parameter, where the server
+	// wants something other than the layout its config sends every date in (Dates.Send): "2006-01-02"
+	// for a parameter that takes a day, say. Nil, or "", is the usual layout. A generated package asks
+	// it with the operation's name and the parameter's name as the document has them.
+	SendDateAs func(operation, parameter string) string
+
 	// SecretHeaders are the headers the service takes its credential in,
 	// beside Authorization and X-Api-Key: a trace does not show them, and a
 	// redirect that leaves the server's host does not carry them.

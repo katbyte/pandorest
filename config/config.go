@@ -36,6 +36,31 @@ const (
 	OperationIDNaming Naming = "operationId"
 )
 
+// Dates says how a server writes a date: Send is the layout a date goes out
+// in, which is the one the server itself writes (Emby's
+// "2006-01-02T15:04:05.0000000Z07:00", TMDB's "2006-01-02"), and Read lists
+// any others it is read in as well (time.RFC3339 for a date with fewer
+// digits, "2006-01-02T15:04:05" for one with no zone). A date in no layout
+// fails the decode naming it and the layouts, so a layout a server adds is
+// found by the live tests and not by a zero date; KeepUnread instead reads
+// it as zero and keeps its text on the value (Unread), for a caller that
+// would rather lose one date than a list of ten thousand items, and the
+// sweep still fails an operation whose answer carried one.
+type Dates struct {
+	Send       string
+	Read       []string
+	KeepUnread bool
+}
+
+// Layouts are every layout a date is read in, Send first.
+func (d Dates) Layouts() []string {
+	if d.Send == "" {
+		return nil
+	}
+
+	return append([]string{d.Send}, d.Read...)
+}
+
 // Paging says how a service's list operations page, which is how the importer
 // tells them from the rest and what the generator builds each one's Complete
 // method on: a GET that takes both parameters and answers a model with both
@@ -204,6 +229,14 @@ type Service struct {
 	// left out when empty. Each must be a string, or a number the document
 	// declares nullable, or the import fails naming it.
 	KeepNull []string
+	// Dates and Days say how the server writes a date-time and a date,
+	// which the document declares but never spells out. Set, every such
+	// field, option and path parameter is the package's Time or Day, a
+	// time.Time held by value with its zero left out of a body and a query;
+	// unset, dates stay the strings the document declares, for the caller
+	// to parse.
+	Dates Dates
+	Days  Dates
 	// InlineSingleOptions has an operation with one query or header
 	// parameter take it as an argument in place of the options struct:
 	// GetMovieLookup(ctx, term), or GetMovieLookup(ctx) to send nothing,

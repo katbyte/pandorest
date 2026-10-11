@@ -161,6 +161,9 @@ func Render(svc *definitions.Service, opts Options) (map[string][]byte, error) {
 	sources["client.go"] = g.clientFile()
 	sources["client_test.go"] = g.testHelpersFile()
 	sources["doc.go"] = g.docFile()
+	if g.datesFile() {
+		sources["time.go"] = g.timeFile()
+	}
 	for gi := range svc.Groups {
 		grp := &svc.Groups[gi]
 		prefix := fileStem(grp.Name)

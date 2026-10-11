@@ -3,6 +3,7 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -173,5 +174,18 @@ func TestResolveInItsOwnDirectory(t *testing.T) {
 	}
 	if resolved.Spec != filepath.Join("api-definitions", "sonarr-openapi-5.0.1.json") || resolved.Definitions != filepath.Join("api-definitions", "sonarr-5.0.1") {
 		t.Errorf("Resolve = %+v", resolved)
+	}
+}
+
+// A date setting reads the sending layout and every reading one, the sending
+// one first, and none when unset.
+func TestDatesLayouts(t *testing.T) {
+	t.Parallel()
+
+	if got := (Dates{Send: "2006-01-02", Read: []string{"2006/01/02"}}).Layouts(); !slices.Equal(got, []string{"2006-01-02", "2006/01/02"}) {
+		t.Errorf("Layouts = %q", got)
+	}
+	if got := (Dates{}).Layouts(); got != nil {
+		t.Errorf("unset Layouts = %q", got)
 	}
 }

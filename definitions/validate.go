@@ -46,7 +46,7 @@ func Validate(svc *Service) error {
 				return
 			}
 			check(where, *t.NestedItem)
-		case Boolean, Integer, Integer64, Float, Double, String, RawObject, Any, RawFile:
+		case Boolean, Integer, Integer64, Float, Double, String, RawObject, Any, RawFile, DateTime, Date, UnixSeconds, UnixMillis:
 		default:
 			problems = append(problems, fmt.Sprintf("%s: unknown type %q", where, t.Type))
 		}

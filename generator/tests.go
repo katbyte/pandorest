@@ -8,6 +8,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/katbyte/pandorest/definitions"
 )
@@ -415,6 +416,14 @@ func (g *gen) samplePath(p definitions.PathParameter) (expr, wire string) {
 		if c := g.constants[p.Type.ReferenceName]; c != nil && len(c.Values) > 0 {
 			return g.typeName(c.Values[0].Name), url.PathEscape(c.Values[0].Value)
 		}
+	case definitions.DateTime:
+		return g.typeName("Time") + "{Time: " + sampleTimeExpr + "}", url.PathEscape(sampleTime.Format(g.svc.Dates[0]))
+	case definitions.Date:
+		return g.typeName("Day") + "{Time: " + sampleTimeExpr + "}", url.PathEscape(sampleTime.Format(g.svc.Days[0]))
+	case definitions.UnixSeconds:
+		return g.typeName("Unix") + "{Time: " + sampleTimeExpr + "}", strconv.FormatInt(sampleTime.Unix(), 10)
+	case definitions.UnixMillis:
+		return g.typeName("UnixMilli") + "{Time: " + sampleTimeExpr + "}", strconv.FormatInt(sampleTime.UnixMilli(), 10)
 	default:
 	}
 	// a slash in the value proves the argument is escaped
@@ -440,6 +449,14 @@ func (g *gen) sampleOption(opt definitions.Option) (expr string, wire []string, 
 	case definitions.String:
 		value := "v-" + opt.Field
 		return strconv.Quote(value), []string{value}, true
+	case definitions.DateTime:
+		return g.typeName("Time") + "{Time: " + sampleTimeExpr + "}", []string{sampleTime.Format(g.svc.Dates[0])}, true
+	case definitions.Date:
+		return g.typeName("Day") + "{Time: " + sampleTimeExpr + "}", []string{sampleTime.Format(g.svc.Days[0])}, true
+	case definitions.UnixSeconds:
+		return g.typeName("Unix") + "{Time: " + sampleTimeExpr + "}", []string{strconv.FormatInt(sampleTime.Unix(), 10)}, true
+	case definitions.UnixMillis:
+		return g.typeName("UnixMilli") + "{Time: " + sampleTimeExpr + "}", []string{strconv.FormatInt(sampleTime.UnixMilli(), 10)}, true
 	case definitions.Reference:
 		if c := g.constants[opt.Type.ReferenceName]; c != nil && len(c.Values) > 0 {
 			return g.typeName(c.Values[0].Name), []string{c.Values[0].Value}, true
@@ -543,6 +560,14 @@ func (g *gen) sampleJSON(t definitions.TypeRef) string {
 		return "[" + g.sampleJSON(*t.NestedItem) + "]"
 	case definitions.String:
 		return `"s"`
+	case definitions.DateTime:
+		return strconv.Quote(sampleTime.Format(g.svc.Dates[0]))
+	case definitions.Date:
+		return strconv.Quote(sampleTime.Format(g.svc.Days[0]))
+	case definitions.UnixSeconds:
+		return strconv.FormatInt(sampleTime.Unix(), 10)
+	case definitions.UnixMillis:
+		return strconv.FormatInt(sampleTime.UnixMilli(), 10)
 	case definitions.Integer, definitions.Integer64:
 		return "7"
 	case definitions.Float, definitions.Double:
@@ -647,3 +672,9 @@ func quoteAll(values []string) string {
 
 	return strings.Join(quoted, ", ")
 }
+
+// sampleTime is the date the generated tests send and answer, and
+// sampleTimeExpr the same as Go source.
+var sampleTime = time.Date(2024, time.March, 4, 5, 6, 7, 0, time.UTC)
+
+const sampleTimeExpr = "time.Date(2024, time.March, 4, 5, 6, 7, 0, time.UTC)"

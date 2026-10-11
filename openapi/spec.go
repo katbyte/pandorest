@@ -171,6 +171,13 @@ type Schema struct {
 // SchemaRefPrefix is how a `$ref` names a component schema.
 const SchemaRefPrefix = "#/components/schemas/"
 
+// FormatUnixSeconds and FormatUnixMillis are the formats a workaround gives an integer that is a date
+// (seconds or milliseconds since 1970), which no document declares.
+const (
+	FormatUnixSeconds = "unix-seconds"
+	FormatUnixMillis  = "unix-milliseconds"
+)
+
 // JSON schema type names.
 const (
 	TypeString  = "string"
@@ -311,4 +318,55 @@ func (o *Operation) Parameter(in, name string) *Parameter {
 // SortedKeys returns the keys of a map in sorted order, for deterministic output.
 func SortedKeys[V any](m map[string]V) []string {
 	return slices.Sorted(maps.Keys(m))
+}
+
+// EachSchema calls fn for every schema in the document: where is the operation it belongs to, as
+// "GET /path", or the component schema's name, and property the name it sits under, a property's or
+// a parameter's, or "" for one that is not named. It covers the component schemas, each operation's
+// parameters, request body and answers, and everything nested in them.
+func (s *Spec) EachSchema(fn func(where, property string, schema *Schema)) {
+	var walk func(where, property string, schema *Schema)
+	walk = func(where, property string, schema *Schema) {
+		if schema == nil {
+			return
+		}
+		fn(where, property, schema)
+		for _, name := range SortedKeys(schema.Properties) {
+			walk(where, name, schema.Properties[name])
+		}
+		walk(where, "", schema.Items)
+		for _, list := range [][]*Schema{schema.AllOf, schema.OneOf, schema.AnyOf} {
+			for _, nested := range list {
+				walk(where, "", nested)
+			}
+		}
+		if additional, ok := schema.Additional(); ok {
+			walk(where, "", additional)
+		}
+	}
+	for _, name := range SortedKeys(s.Components.Schemas) {
+		walk(name, "", s.Components.Schemas[name])
+	}
+	for _, path := range SortedKeys(s.Paths) {
+		item := s.Paths[path]
+		for method, op := range map[string]*Operation{"GET": item.Get, "POST": item.Post, "PUT": item.Put, "DELETE": item.Delete, "PATCH": item.Patch} {
+			if op == nil {
+				continue
+			}
+			where := method + " " + path
+			for _, p := range op.Parameters {
+				walk(where, p.Name, p.Schema)
+			}
+			if op.RequestBody != nil {
+				for _, mediaType := range SortedKeys(op.RequestBody.Content) {
+					walk(where, "", op.RequestBody.Content[mediaType].Schema)
+				}
+			}
+			for _, status := range SortedKeys(op.Responses) {
+				for _, mediaType := range SortedKeys(op.Responses[status].Content) {
+					walk(where, "", op.Responses[status].Content[mediaType].Schema)
+				}
+			}
+		}
+	}
 }

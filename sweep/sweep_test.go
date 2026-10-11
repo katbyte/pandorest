@@ -3,7 +3,9 @@ package sweep_test
 import (
 	"cmp"
 	"context"
+	"errors"
 	"io"
+	"maps"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -21,6 +23,7 @@ import (
 type item struct {
 	ID   string `json:"Id,omitempty"`
 	Name string `json:"Name,omitempty"`
+	Seen stamp  `json:"Seen,omitzero"`
 }
 
 type page struct {
@@ -46,7 +49,31 @@ type options struct {
 	Limit *int
 	IDs   []string
 	Exact *bool
+	Since stamp
 }
+
+// stamp is a date in the shape of a generated package's Time.
+type stamp struct {
+	time.Time
+	Unread string
+}
+
+func (s *stamp) UnmarshalJSON(data []byte) error {
+	parsed, err := client.ParseTime(data, []string{time.RFC3339})
+	if unread, ok := errors.AsType[*client.UnreadDateError](err); ok {
+		s.Unread = unread.Text
+
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	s.Time = parsed
+
+	return nil
+}
+
+func (s stamp) UnreadDate() string { return s.Unread }
 
 func (options) ToHeaders() *client.Headers { return &client.Headers{} }
 
@@ -63,6 +90,9 @@ func (o options) ToQuery() *client.QueryParams {
 	}
 	if o.Exact != nil {
 		out.Append("exact", "set")
+	}
+	if !o.Since.IsZero() {
+		out.Append("since", o.Since.Format(time.RFC3339))
 	}
 
 	return &out
@@ -246,6 +276,7 @@ func service() *definitions.Service {
 		{Name: "limit", Field: "Limit", In: definitions.InQuery, Type: definitions.TypeRef{Type: definitions.Integer}},
 		{Name: "ids", Field: "IDs", In: definitions.InQuery, Type: definitions.TypeRef{Type: definitions.List, NestedItem: &definitions.TypeRef{Type: definitions.String}}},
 		{Name: "exact", Field: "Exact", In: definitions.InQuery, Type: definitions.TypeRef{Type: definitions.Boolean}},
+		{Name: "since", Field: "Since", In: definitions.InQuery, Type: definitions.TypeRef{Type: definitions.DateTime}},
 	}
 	one := op("GetItem", "/items/{id}", ref("Item"))
 	one.PathParameters = []definitions.PathParameter{{Name: "id", Argument: "id", Type: str()}}
@@ -496,13 +527,13 @@ func TestOptions(t *testing.T) {
 	s, queries := newSweep(t, served)
 	s.Fixtures.Always = map[string]string{"UserID": "u1"}
 	s.Fixtures.Options = map[string]string{"ids": "1,2"}
-	s.Cases = map[string]sweep.Case{"GetItems": {Options: map[string]any{"Limit": 5, "Exact": false}}}
+	s.Cases = map[string]sweep.Case{"GetItems": {Options: map[string]any{"Limit": 5, "Exact": false, "Since": "2024-03-04T05:06:07Z"}}}
 	s.Definitions.Groups[0].Operations[0].Options[2].Required = true // ids
 
 	if out := s.Operation(t.Context(), operation(t, s, "GetItems")); len(out.Failures) > 0 {
 		t.Fatalf("failures = %q", out.Failures)
 	}
-	if want := "/items?exact=set&ids=1%2C2&limit=set&userId=u1"; !slices.Contains(*queries, want) {
+	if want := "/items?exact=set&ids=1%2C2&limit=set&since=2024-03-04T05%3A06%3A07Z&userId=u1"; !slices.Contains(*queries, want) {
 		t.Errorf("the server saw %q, want %s", *queries, want)
 	}
 
@@ -544,6 +575,22 @@ func TestInlinedOption(t *testing.T) {
 	s.Definitions.Groups[0].Operations[4].Options[0].Required = true // term
 	if out := s.Operation(t.Context(), operation(t, s, "GetLookup")); len(out.Failures) != 1 || !strings.Contains(out.Failures[0], "no value for required option term") {
 		t.Errorf("a required argument nothing supplies = %q", out.Failures)
+	}
+}
+
+// A date the model kept as text because no layout read it fails the
+// operation, naming the text and where it was.
+func TestUnreadDate(t *testing.T) {
+	t.Parallel()
+
+	replies := maps.Clone(served)
+	replies["/items/a"] = struct {
+		status int
+		body   string
+	}{http.StatusOK, `{"Id": "a", "Name": "one", "Seen": "04/03/2024"}`}
+	s, _ := newSweep(t, replies)
+	if out := s.Operation(t.Context(), operation(t, s, "GetItem")); len(out.Failures) != 1 || !strings.Contains(out.Failures[0], `GET /items/{id} answers a date no layout reads: Model.Seen = "04/03/2024"; add the layout to the service's Dates or Days`) {
+		t.Errorf("an unread date = %q", out.Failures)
 	}
 }
 
