@@ -611,7 +611,7 @@ func TestUnknownValue(t *testing.T) {
 		body   string
 	}{http.StatusOK, `{"Id": "a", "Name": "one", "Kind": "song"}`}
 	s, _ := newSweep(t, replies)
-	if out := s.Operation(t.Context(), operation(t, s, "GetItem")); len(out.Failures) != 1 || !strings.Contains(out.Failures[0], `GET /items/{id} answers a value its enum does not list: Answer.Kind = "song" (kind, at Kind); add it to the enum's values, or narrow the enum's In to leave the place out`) {
+	if out := s.Operation(t.Context(), operation(t, s, "GetItem")); len(out.Failures) != 1 || !strings.Contains(out.Failures[0], `GET /items/{id} answers a value its enum does not list: Answer.Kind = "song" (kind, at .Kind); add it to the enum's values, or narrow the enum's In to leave the place out`) {
 		t.Errorf("an unknown value = %q", out.Failures)
 	}
 }

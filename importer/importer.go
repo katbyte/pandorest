@@ -61,6 +61,7 @@ func FromSpec(cfg config.Service, spec *openapi.Spec, applied []string, log func
 		}
 	}
 	im.assignOwners(groups)
+	kinds := im.applyIDs(groups)
 
 	if len(im.failures) > 0 {
 		slices.Sort(im.failures)
@@ -81,6 +82,7 @@ func FromSpec(cfg config.Service, spec *openapi.Spec, applied []string, log func
 
 		DatesKeepUnread: cfg.Dates.KeepUnread,
 		DaysKeepUnread:  cfg.Days.KeepUnread,
+		IDs:             kinds,
 	}
 	if svc.Workarounds == nil {
 		svc.Workarounds = []string{}

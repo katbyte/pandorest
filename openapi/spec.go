@@ -393,3 +393,40 @@ func PathName(path string) string {
 
 	return path
 }
+
+// Place is one place in a document as a workaround's In or Except names it: an
+// operation ("GET /api/stacks") or a component schema ("Container"), and an
+// optional path inside it, ".status" for the property at the top alone,
+// "containerDetails.status" for the one at that path.
+type Place struct {
+	Where, Path string
+	Top         bool
+}
+
+// PlaceOf reads a place as written: the place, then an optional path, a
+// leading dot marking the top.
+func PlaceOf(entry string) Place {
+	entry = strings.TrimSpace(entry)
+	i := strings.LastIndexByte(entry, ' ')
+	if i < 0 || strings.HasPrefix(entry[i+1:], "/") {
+		return Place{Where: entry}
+	}
+	p := Place{Where: entry[:i], Path: entry[i+1:]}
+	if strings.HasPrefix(p.Path, ".") {
+		p.Path, p.Top = p.Path[1:], true
+	}
+
+	return p
+}
+
+// Matches reports whether a schema at where and path is in the place.
+func (p Place) Matches(where, path string) bool {
+	switch {
+	case p.Where != where:
+		return false
+	case p.Path == "":
+		return true
+	default:
+		return path == p.Path
+	}
+}

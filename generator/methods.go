@@ -300,11 +300,16 @@ func (g *gen) appendOption(o *definitions.Operation, opt definitions.Option) str
 				item = "strconv.FormatInt(v, 10)"
 			case definitions.Reference:
 				item = "string(v)"
+			case definitions.ID:
+				item = g.idText(t.NestedItem.ReferenceName, "v")
 			default:
 			}
 			return fmt.Sprintf("\tfor _, v := range %s {\n\t\tout.Append(%q, %s)\n\t}\n", field, opt.Name, item)
 		}
 		cond, value = "len("+field+") > 0", "client.CSV("+field+")"
+		if t.NestedItem.Type == definitions.ID {
+			value = "client.Joined(" + field + ")"
+		}
 	case definitions.Dictionary:
 		if opt.DeepObject {
 			return fmt.Sprintf("\tfor _, kv := range client.DeepObject(%q, %s) {\n\t\tout.Append(kv[0], kv[1])\n\t}\n", opt.Name, field)
@@ -316,6 +321,8 @@ func (g *gen) appendOption(o *definitions.Operation, opt definitions.Option) str
 		cond, value = "!"+field+".IsZero()", field+g.dateAs(o, opt.Name)
 	case definitions.UnixSeconds, definitions.UnixMillis:
 		cond, value = "!"+field+".IsZero()", field+".String()"
+	case definitions.ID:
+		cond, value = g.idCondition(t.ReferenceName, field), g.idText(t.ReferenceName, field)
 	default:
 		cond, value = field+` != ""`, field
 	}
@@ -361,6 +368,9 @@ func (g *gen) pathExpression(o *definitions.Operation) string {
 		case definitions.UnixSeconds, definitions.UnixMillis:
 			format.WriteString("%s")
 			args = append(args, p.Argument+".String()")
+		case definitions.ID:
+			format.WriteString("%s")
+			args = append(args, "url.PathEscape("+g.idText(p.Type.ReferenceName, p.Argument)+")")
 		default:
 			format.WriteString("%s")
 			args = append(args, "url.PathEscape("+p.Argument+")")
@@ -679,4 +689,26 @@ func (g *gen) dateAs(o *definitions.Operation, parameter string) string {
 	}
 
 	return fmt.Sprintf(".As(sendDateAs(%q, %q))", o.Name, parameter)
+}
+
+// idCondition is when an id option is sent: when it is not the zero of its
+// base, which no server mints as an id.
+func (g *gen) idCondition(kind, field string) string {
+	if g.idBase(kind) == definitions.String {
+		return field + ` != ""`
+	}
+
+	return field + " != 0"
+}
+
+// idText is an id as a query or a path carries it.
+func (g *gen) idText(kind, expr string) string {
+	switch g.idBase(kind) {
+	case definitions.String:
+		return "string(" + expr + ")"
+	case definitions.Integer64:
+		return "strconv.FormatInt(int64(" + expr + "), 10)"
+	default:
+		return "strconv.Itoa(int(" + expr + "))"
+	}
 }

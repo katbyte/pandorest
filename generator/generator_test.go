@@ -914,6 +914,58 @@ func TestUnixDates(t *testing.T) {
 	}
 }
 
+// A kind of id is a named type in ids.go, carried by path parameters, fields
+// and options, formatted by the method on a path the document types as text,
+// sent joined where the service takes several in one parameter; the
+// generated tests prove the wire.
+//
+//nolint:paralleltest // writes the testdata package the other tests would remove
+func TestIDs(t *testing.T) {
+	spec, err := openapi.Parse([]byte(`{"openapi": "3.0.1", "info": {"title": "Mini", "version": "1"}, "paths": {
+    "/series": {"get": {"operationId": "GetSeries", "tags": ["Series"], "parameters": [{"name": "ids", "in": "query", "schema": {"type": "string"}}, {"name": "tagIds", "in": "query", "schema": {"type": "array", "items": {"type": "integer"}}}],
+      "responses": {"200": {"content": {"application/json": {"schema": {"type": "array", "items": {"$ref": "#/components/schemas/Series"}}}}}}}},
+    "/series/{id}": {"put": {"operationId": "PutSeriesById", "tags": ["Series"], "parameters": [{"name": "id", "in": "path", "required": true, "schema": {"type": "string"}}],
+      "requestBody": {"content": {"application/json": {"schema": {"$ref": "#/components/schemas/Series"}}}},
+      "responses": {"200": {"content": {"application/json": {"schema": {"$ref": "#/components/schemas/Series"}}}}}}},
+    "/items/{itemId}": {"get": {"operationId": "GetItem", "tags": ["Items"], "parameters": [{"name": "itemId", "in": "path", "required": true, "schema": {"type": "string"}}, {"name": "userId", "in": "query", "schema": {"type": "string"}}],
+      "responses": {"200": {"content": {"application/json": {"schema": {"$ref": "#/components/schemas/Item"}}}}}}}},
+  "components": {"schemas": {
+    "Series": {"type": "object", "properties": {"id": {"type": "integer"}, "title": {"type": "string"}, "tags": {"type": "array", "items": {"type": "integer"}}}},
+    "Item": {"type": "object", "properties": {"id": {"type": "string"}, "userId": {"type": "string"}}}}}}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg := config.Service{Name: "mini", Package: "mini", Naming: config.OperationIDNaming, Auth: "APIKey", IDs: []config.ID{
+		{Name: "SeriesID", Of: []string{"Series"}, Joined: []string{"ids"}},
+		{Name: "TagID", Base: "int", Names: []string{"tags", "tagIds"}},
+		{Name: "ItemID", Of: []string{"Item"}, Names: []string{"itemId"}},
+		{Name: "UserID", Base: "string", Names: []string{"userId"}},
+	}}
+	svc, err := importer.FromSpec(cfg, spec, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir := generateInModule(t, svc, generator.Options{})
+	goTool(t, dir, "vet")
+	goTool(t, dir, "test")
+
+	for file, wants := range map[string][]string{
+		"ids.go":                         {"type SeriesID int\n", "type TagID int\n", "type ItemID string\n", "type UserID string\n"},
+		"series_model_series.go":         {"Id    SeriesID `json:\"id,omitempty\"`", "Tags  []TagID  `json:\"tags,omitzero\"`"},
+		"series_method_putseriesbyid.go": {"func (c Client) PutSeriesById(ctx context.Context, id SeriesID, input Series) (", `url.PathEscape(strconv.Itoa(int(id)))`},
+		"series_method_getseries.go":     {"Ids    []SeriesID", "TagIds []TagID", `out.Append("ids", client.Joined(o.Ids))`, `out.Append("tagIds", strconv.Itoa(int(v)))`},
+		"items_method_getitem.go":        {"func (c Client) GetItem(ctx context.Context, itemId ItemID, options ...GetItemOptions) (", `url.PathEscape(string(itemId))`, `if o.UserId != "" {`, `out.Append("userId", string(o.UserId))`},
+		"items_model_item.go":            {"Id     ItemID `json:\"id,omitempty\"`", "UserId UserID `json:\"userId,omitempty\"`"},
+	} {
+		src := read(t, dir, file)
+		for _, want := range wants {
+			if !strings.Contains(src, want) {
+				t.Errorf("%s lacks %q:\n%s", file, want, src)
+			}
+		}
+	}
+}
+
 // A credential named by a phrase is an argument called credential, and the
 // phrase words the refusal.
 func TestCredentialPhrase(t *testing.T) {

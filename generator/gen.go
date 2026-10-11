@@ -269,7 +269,7 @@ func (g *gen) goType(t definitions.TypeRef) string {
 		return "[]" + g.goType(*t.NestedItem)
 	case definitions.Dictionary:
 		return "map[string]" + g.goType(*t.NestedItem)
-	case definitions.Reference:
+	case definitions.Reference, definitions.ID:
 		return g.typeName(t.ReferenceName)
 	}
 
@@ -686,4 +686,34 @@ func kindsUsed(svc *definitions.Service) map[definitions.ObjectType]bool {
 // Unix or UnixMilli from a field a workaround declared an epoch.
 func (g *gen) datesFile() bool {
 	return len(g.svc.Dates) > 0 || len(g.svc.Days) > 0 || g.kinds[definitions.UnixSeconds] || g.kinds[definitions.UnixMillis]
+}
+
+// idBase is the base type of a kind of id, Integer when the service does not
+// declare the kind, which Validate has already refused.
+func (g *gen) idBase(kind string) definitions.ObjectType {
+	if base := g.svc.IDBase(kind); base != "" {
+		return base
+	}
+
+	return definitions.Integer
+}
+
+// idsFile declares a named type for each kind of id the service tells apart.
+func (g *gen) idsFile() string {
+	var b strings.Builder
+	for i, k := range g.svc.IDs {
+		g.declare(k.Name, "ids.go")
+		if i > 0 {
+			b.WriteString("\n")
+		}
+		base := g.goType(definitions.TypeRef{Type: k.Base})
+		list := "client.IDs"
+		if k.Base == definitions.String {
+			list = "client.StringIDs"
+		}
+		fmt.Fprintf(&b, "// %s is a kind of id the service tells apart, which the compiler keeps from every other kind;\n// %s(id) and %s(n) convert one value, %s a list.\n", k.Name, base, k.Name, list)
+		fmt.Fprintf(&b, "type %s %s\n", k.Name, base)
+	}
+
+	return g.fileHeader(b.String())
 }

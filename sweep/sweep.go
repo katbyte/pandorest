@@ -522,7 +522,7 @@ func unknownValues(v reflect.Value, at, path string, found []string) []string {
 	if v.CanInterface() {
 		if k, ok := reflect.TypeAssert[known](v); ok {
 			if !k.Known() {
-				found = append(found, fmt.Sprintf("%s = %q (%s, at %s)", at, v.String(), v.Type().Name(), path))
+				found = append(found, fmt.Sprintf("%s = %q (%s, at %s)", at, v.String(), v.Type().Name(), inForm(path)))
 			}
 
 			return found
@@ -552,6 +552,17 @@ func unknownValues(v reflect.Value, at, path string, found []string) []string {
 	}
 
 	return found
+}
+
+// inForm is a path as a workaround's In takes it: a top-level name alone
+// carries a leading dot, so that what is copied types that place and not
+// every place of the name.
+func inForm(path string) string {
+	if !strings.Contains(path, ".") {
+		return "." + path
+	}
+
+	return path
 }
 
 // jsonName is the name a field has on the wire.

@@ -162,6 +162,11 @@ func (g *gen) renderGrouped(add func(name, src string) error) error {
 			return err
 		}
 	}
+	if len(g.svc.IDs) > 0 {
+		if err := add(root+"ids.go", g.idsFile()); err != nil {
+			return err
+		}
+	}
 
 	// a package per tag
 	for gi := range g.svc.Groups {

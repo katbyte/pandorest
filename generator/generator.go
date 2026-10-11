@@ -164,6 +164,9 @@ func Render(svc *definitions.Service, opts Options) (map[string][]byte, error) {
 	if g.datesFile() {
 		sources["time.go"] = g.timeFile()
 	}
+	if len(svc.IDs) > 0 {
+		sources["ids.go"] = g.idsFile()
+	}
 	for gi := range svc.Groups {
 		grp := &svc.Groups[gi]
 		prefix := fileStem(grp.Name)

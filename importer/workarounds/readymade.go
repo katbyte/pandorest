@@ -528,42 +528,6 @@ type Enum struct {
 	In     []string
 }
 
-// place is one entry of Enum.In, taken apart.
-type place struct {
-	where, path string
-	top         bool
-}
-
-// placeOf reads an entry of In: the place, then an optional path, ".status"
-// for one at the top.
-func placeOf(entry string) place {
-	entry = strings.TrimSpace(entry)
-	i := strings.LastIndexByte(entry, ' ')
-	if i < 0 || strings.HasPrefix(entry[i+1:], "/") {
-		return place{where: entry}
-	}
-	p := place{where: entry[:i], path: entry[i+1:]}
-	if strings.HasPrefix(p.path, ".") {
-		p.path, p.top = p.path[1:], true
-	}
-
-	return p
-}
-
-// matches reports whether a schema at where and path is in the place.
-func (p place) matches(where, path string) bool {
-	switch {
-	case p.where != where:
-		return false
-	case p.path == "":
-		return true
-	case p.top:
-		return path == p.path
-	default:
-		return path == p.path
-	}
-}
-
 // UndeclaredEnums is for the strings a document declares plain whose values
 // the server draws from a fixed set (Dockhand's state, protocol, mode), so
 // that the package holds them as a typed enum with its values as constants,
@@ -598,9 +562,9 @@ func UndeclaredEnums(about About, enums map[string]Enum) Workaround {
 			}
 			spec.Components.Schemas[name] = &openapi.Schema{Type: openapi.TypeString, Enum: values}
 
-			places := make([]place, 0, len(e.In))
+			places := make([]openapi.Place, 0, len(e.In))
 			for _, entry := range e.In {
-				places = append(places, placeOf(entry))
+				places = append(places, openapi.PlaceOf(entry))
 			}
 			marked, markedIn := 0, make([]int, len(places))
 			spec.EachSchema(func(where, path string, s *openapi.Schema) {
@@ -608,7 +572,7 @@ func UndeclaredEnums(about About, enums map[string]Enum) Workaround {
 					return
 				}
 				if len(places) > 0 {
-					i := slices.IndexFunc(places, func(p place) bool { return p.matches(where, path) })
+					i := slices.IndexFunc(places, func(p openapi.Place) bool { return p.Matches(where, path) })
 					if i < 0 {
 						return
 					}

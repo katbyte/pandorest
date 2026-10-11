@@ -1165,3 +1165,134 @@ func TestPagingShapes(t *testing.T) {
 		}
 	}
 }
+
+// A kind of id is applied by the models it is of, by name and by In, with
+// Except, Joined and Plain; its base is read from the model's id; a typed id
+// on a path the document types as text is kept; and the import refuses what
+// it cannot settle and logs what each kind reached and what no kind covers.
+func TestIDs(t *testing.T) {
+	t.Parallel()
+
+	const doc = `{"openapi": "3.0.1", "info": {"title": "Arr", "version": "1"}, "paths": {
+    "/series": {"get": {"operationId": "GetSeries", "tags": ["Series"], "parameters": [{"name": "tvdbId", "in": "query", "schema": {"type": "integer"}}, {"name": "ids", "in": "query", "schema": {"type": "string"}}],
+      "responses": {"200": {"content": {"application/json": {"schema": {"type": "array", "items": {"$ref": "#/components/schemas/SeriesResource"}}}}}}}},
+    "/series/{id}": {"get": {"operationId": "GetSeriesById", "tags": ["Series"], "parameters": [{"name": "id", "in": "path", "required": true, "schema": {"type": "integer"}}],
+      "responses": {"200": {"content": {"application/json": {"schema": {"$ref": "#/components/schemas/SeriesResource"}}}}}},
+      "put": {"operationId": "PutSeriesById", "tags": ["Series"], "parameters": [{"name": "id", "in": "path", "required": true, "schema": {"type": "string"}}],
+      "requestBody": {"content": {"application/json": {"schema": {"$ref": "#/components/schemas/SeriesResource"}}}},
+      "responses": {"200": {"content": {"application/json": {"schema": {"$ref": "#/components/schemas/SeriesResource"}}}}}}},
+    "/episode": {"get": {"operationId": "GetEpisode", "tags": ["Episode"], "parameters": [{"name": "seriesId", "in": "query", "schema": {"type": "integer"}}, {"name": "episodeIds", "in": "query", "schema": {"type": "array", "items": {"type": "integer"}}}],
+      "responses": {"200": {"content": {"application/json": {"schema": {"type": "array", "items": {"$ref": "#/components/schemas/EpisodeResource"}}}}}}}},
+    "/series/{id}/folder": {"get": {"operationId": "GetSeriesByIdFolder", "tags": ["Series"], "parameters": [{"name": "id", "in": "path", "required": true, "schema": {"type": "integer"}}],
+      "responses": {"200": {"content": {"application/json": {"schema": {"type": "object", "properties": {"path": {"type": "string"}}}}}}}}},
+    "/series/{id}/drop": {"delete": {"operationId": "DeleteSeriesById", "tags": ["Series"], "parameters": [{"name": "id", "in": "path", "required": true, "schema": {"type": "integer"}}],
+      "responses": {"204": {"description": "gone"}}}},
+    "/command/{id}": {"get": {"operationId": "GetCommandById", "tags": ["Command"], "parameters": [{"name": "id", "in": "path", "required": true, "schema": {"type": "integer"}}],
+      "responses": {"200": {"content": {"application/json": {"schema": {"type": "object", "properties": {"id": {"type": "integer"}, "downloadId": {"type": "string"}}}}}}}}}},
+  "components": {"schemas": {
+    "SeriesResource": {"type": "object", "properties": {"id": {"type": "integer"}, "title": {"type": "string"}, "tvdbId": {"type": "integer"}, "tags": {"type": "array", "items": {"type": "integer"}}, "parentId": {"type": "integer"}}},
+    "EpisodeResource": {"type": "object", "properties": {"id": {"type": "integer"}, "seriesId": {"type": "integer"}, "episodeFileId": {"type": "integer"}}},
+    "TagResource": {"type": "object", "properties": {"id": {"type": "integer"}, "label": {"type": "string"}}}}}}`
+	spec, err := openapi.Parse([]byte(doc))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var logged []string
+	cfg := config.Service{Name: "arr", Package: "arr", Naming: config.OperationIDNaming, Auth: "APIKey", IDs: []config.ID{
+		{Name: "SeriesID", Of: []string{"SeriesResource"}, Names: []string{"seriesId"}, Joined: []string{"ids"}, In: []string{"SeriesResource .parentId"}},
+		{Name: "EpisodeID", Of: []string{"EpisodeResource"}, Names: []string{"episodeIds"}},
+		{Name: "TagID", Of: []string{"TagResource"}, Names: []string{"tags"}},
+		{Name: "TvdbID", Base: "int", Names: []string{"tvdbId"}, Except: []string{"GET /series tvdbId"}},
+	}, Plain: []string{"downloadId"}}
+	svc, err := FromSpec(cfg, spec, nil, func(msg string) { logged = append(logged, msg) })
+	if err != nil {
+		t.Fatal(err)
+	}
+	ops := map[string]*definitions.Operation{}
+	for _, o := range svc.Operations() {
+		ops[o.Name] = o
+	}
+	id := func(kind string) definitions.TypeRef {
+		return definitions.TypeRef{Type: definitions.ID, ReferenceName: kind}
+	}
+	series := svc.Models()["SeriesResource"]
+	if got := fieldNamed(series.Fields, "id").Type; got != id("SeriesID") {
+		t.Errorf("SeriesResource.id = %+v", got)
+	}
+	if got := fieldNamed(series.Fields, "parentId").Type; got != id("SeriesID") {
+		t.Errorf("SeriesResource.parentId, by In, = %+v", got)
+	}
+	if got := fieldNamed(series.Fields, "tags").Type; got.Type != definitions.List || *got.NestedItem != id("TagID") {
+		t.Errorf("SeriesResource.tags = %+v", got)
+	}
+	if got := fieldNamed(series.Fields, "tvdbId").Type; got != id("TvdbID") {
+		t.Errorf("SeriesResource.tvdbId = %+v", got)
+	}
+	if got := ops["GetSeriesById"].PathParameters[0].Type; got != id("SeriesID") {
+		t.Errorf("GET /series/{id}, by Of, = %+v", got)
+	}
+	if got := ops["PutSeriesById"].PathParameters[0].Type; got != id("SeriesID") {
+		t.Errorf("PUT /series/{id}, text in the document, = %+v", got)
+	}
+	if got := ops["GetCommandById"].PathParameters[0].Type; got.Type != definitions.Integer {
+		t.Errorf("GET /command/{id}, of no kind, = %+v", got)
+	}
+	if got := ops["GetSeriesByIdFolder"].PathParameters[0].Type; got != id("SeriesID") {
+		t.Errorf("GET /series/{id}/folder, under a typed path, = %+v", got)
+	}
+	if got := ops["DeleteSeriesById"].PathParameters[0].Type; got != id("SeriesID") {
+		t.Errorf("DELETE /series/{id}/drop, answering nothing, = %+v", got)
+	}
+	opts := ops["GetSeries"].Options
+	if got := opts[1].Type; got.Type != definitions.List || *got.NestedItem != id("SeriesID") || !opts[1].CommaSeparated {
+		t.Errorf("GET /series ids, Joined, = %+v comma %t", got, opts[1].CommaSeparated)
+	}
+	if got := opts[0].Type; got.Type != definitions.Integer {
+		t.Errorf("GET /series tvdbId, Except, = %+v", got)
+	}
+	if got := ops["GetEpisode"].Options[1].Type; got.Type != definitions.List || *got.NestedItem != id("EpisodeID") {
+		t.Errorf("GET /episode episodeIds = %+v", got)
+	}
+	if len(svc.IDs) != 4 || svc.IDs[0] != (definitions.IDKind{Name: "SeriesID", Base: definitions.Integer}) || svc.IDs[3].Base != definitions.Integer {
+		t.Errorf("kinds = %+v", svc.IDs)
+	}
+	for _, want := range []string{"arr: ids: SeriesID in 9 places (5 from Of, 3 by name, 1 by In)", "arr: ids: TvdbID in 1 place (0 from Of, 1 by name, 0 by In)", "arr: 2 names look like ids and have no kind (give each a kind in IDs, or leave it in Plain): episodeFileId in EpisodeResource; id in GetCommandByIdResponse, GET /command/{id}"} {
+		if !slices.ContainsFunc(logged, func(l string) bool { return strings.HasPrefix(l, want) }) {
+			t.Errorf("the log lacks %q:\n%s", want, strings.Join(logged, "\n"))
+		}
+	}
+
+	// what the import refuses
+	for name, tc := range map[string]struct {
+		ids   []config.ID
+		plain []string
+		want  string
+	}{
+		"a kind reaching nothing":     {ids: []config.ID{{Name: "GhostID", Base: "int", Names: []string{"ghostId"}}}, want: "the id kind GhostID reaches no field, option or path parameter"},
+		"a model that is not there":   {ids: []config.ID{{Name: "GhostID", Of: []string{"Ghost"}}}, want: "GhostID: Of names Ghost, which is not a model of the document"},
+		"a model with no id":          {ids: []config.ID{{Name: "GhostID", Of: []string{"GetCommandByIdResponse"}, Names: []string{"seriesId"}}}, want: ""},
+		"two kinds on one place":      {ids: []config.ID{{Name: "SeriesID", Of: []string{"SeriesResource"}}, {Name: "OtherID", Base: "int", Names: []string{"id"}}}, want: "SeriesResource id is claimed by SeriesID and OtherID"},
+		"a name both typed and plain": {ids: []config.ID{{Name: "SeriesID", Of: []string{"SeriesResource"}, Names: []string{"seriesId"}}}, plain: []string{"seriesId"}, want: "seriesId is both a name of SeriesID and in Plain"},
+		"an In matching nothing":      {ids: []config.ID{{Name: "SeriesID", Of: []string{"SeriesResource"}, In: []string{"SeriesResource .nothing"}}}, want: `SeriesID: In "SeriesResource .nothing" matches no plain id`},
+		"a string kind on a number":   {ids: []config.ID{{Name: "SeriesID", Base: "string", Names: []string{"seriesId"}}}, want: "GET /episode seriesId is a Integer, which cannot be a SeriesID (String)"},
+		"a base that is not a type":   {ids: []config.ID{{Name: "SeriesID", Base: "float", Names: []string{"seriesId"}}}, want: `SeriesID: Base "float" is not int, int64 or string`},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			spec, _ := openapi.Parse([]byte(doc))
+			cfg := config.Service{Name: "arr", Package: "arr", Naming: config.OperationIDNaming, Auth: "APIKey", IDs: tc.ids, Plain: tc.plain}
+			err := VerifyIDs(cfg, spec)
+			if tc.want == "" {
+				if err != nil {
+					t.Errorf("VerifyIDs = %v", err)
+				}
+
+				return
+			}
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Errorf("VerifyIDs = %v, want containing %q", err, tc.want)
+			}
+		})
+	}
+}

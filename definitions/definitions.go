@@ -37,6 +37,8 @@ type Service struct {
 	// zero with its text kept, rather than failing the decode.
 	DatesKeepUnread bool `json:"DatesKeepUnread,omitempty"`
 	DaysKeepUnread  bool `json:"DaysKeepUnread,omitempty"`
+	// IDs are the kinds of id the package declares types for.
+	IDs []IDKind `json:"IDs,omitempty"`
 
 	Groups []Group `json:"-"`
 }
@@ -250,7 +252,16 @@ const (
 	// UnixMilli, which read a number and write one back.
 	UnixSeconds ObjectType = "UnixSeconds"
 	UnixMillis  ObjectType = "UnixMillis"
+	// ID is a kind of id the service tells apart (Service.IDs), named in
+	// ReferenceName, held as a named type over its base.
+	ID ObjectType = "ID"
 )
+
+// IDKind is one kind of id, a named type over an int, an int64 or a string.
+type IDKind struct {
+	Name string     `json:"Name"`
+	Base ObjectType `json:"Base"`
+}
 
 // TypeRef is the type of a field, parameter or body.
 type TypeRef struct {
@@ -321,4 +332,16 @@ func (s *Service) Constants() map[string]*Constant {
 	}
 
 	return out
+}
+
+// IDBase is the base type of a kind of id, or "" for a kind the service does
+// not declare.
+func (s *Service) IDBase(kind string) ObjectType {
+	for _, k := range s.IDs {
+		if k.Name == kind {
+			return k.Base
+		}
+	}
+
+	return ""
 }

@@ -36,6 +36,29 @@ const (
 	OperationIDNaming Naming = "operationId"
 )
 
+// ID is one kind of id. Name is the type's (SeriesID). Of names the models
+// the kind is the id of (SeriesResource): their Id is the kind, so is every
+// bare path {id} whose operation answers or takes one of them, and the base
+// type, int or string, is read from that Id. Base names it for a kind with
+// no model of its own, a foreign id (TvdbID: "int"). Names are the
+// parameters and properties that always mean the kind wherever they sit
+// (seriesId, seriesIds, tags), matched without regard to case. In names the
+// places the inference cannot settle, in the form a workaround's In takes
+// ("GET /api/v3/series/{id} id", "SeriesResource .parentId"), and Except
+// the places of a Name that are something else there. Joined names the
+// parameters that take the kind as one comma-joined string (Emby's Ids),
+// held in Go as a list of the kind. A typed id on a path the document types
+// as text is formatted by the method, so the caller passes the kind.
+type ID struct {
+	Name   string
+	Of     []string
+	Base   string
+	Names  []string
+	In     []string
+	Except []string
+	Joined []string
+}
+
 // Dates says how a server writes a date: Send is the layout a date goes out
 // in, which is the one the server itself writes (Emby's
 // "2006-01-02T15:04:05.0000000Z07:00", TMDB's "2006-01-02"), and Read lists
@@ -237,6 +260,14 @@ type Service struct {
 	// to parse.
 	Dates Dates
 	Days  Dates
+	// IDs are the kinds of id the SDK tells apart, each a named type over
+	// the plain int or string the document declares (type SeriesID int), so
+	// that the compiler refuses a series id where an episode id goes. Every
+	// id not in a kind stays as the document has it; Plain names the
+	// id-looking ones left so on purpose, which quiets the import's log of
+	// the ones no kind covers. Off, nothing changes.
+	IDs   []ID
+	Plain []string
 	// InlineSingleOptions has an operation with one query or header
 	// parameter take it as an argument in place of the options struct:
 	// GetMovieLookup(ctx, term), or GetMovieLookup(ctx) to send nothing,

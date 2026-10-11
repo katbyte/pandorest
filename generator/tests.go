@@ -431,6 +431,10 @@ func (g *gen) samplePath(p definitions.PathParameter) (expr, wire string) {
 		return g.typeName("Unix") + "{Time: " + sampleTimeExpr + "}", strconv.FormatInt(sampleTime.Unix(), 10)
 	case definitions.UnixMillis:
 		return g.typeName("UnixMilli") + "{Time: " + sampleTimeExpr + "}", strconv.FormatInt(sampleTime.UnixMilli(), 10)
+	case definitions.ID:
+		expr, wire := g.sampleID(p.Type.ReferenceName, p.Argument)
+
+		return expr, url.PathEscape(wire)
 	default:
 	}
 	// a slash in the value proves the argument is escaped
@@ -464,6 +468,10 @@ func (g *gen) sampleOption(opt definitions.Option) (expr string, wire []string, 
 		return g.typeName("Unix") + "{Time: " + sampleTimeExpr + "}", []string{strconv.FormatInt(sampleTime.Unix(), 10)}, true
 	case definitions.UnixMillis:
 		return g.typeName("UnixMilli") + "{Time: " + sampleTimeExpr + "}", []string{strconv.FormatInt(sampleTime.UnixMilli(), 10)}, true
+	case definitions.ID:
+		expr, wire := g.sampleID(opt.Type.ReferenceName, opt.Field)
+
+		return expr, []string{wire}, true
 	case definitions.Reference:
 		if c := g.constants[opt.Type.ReferenceName]; c != nil && len(c.Values) > 0 {
 			return g.typeName(c.Values[0].Name), []string{c.Values[0].Value}, true
@@ -492,6 +500,13 @@ func (g *gen) sampleOption(opt definitions.Option) (expr string, wire []string, 
 // sampleList is two list elements and what each sends.
 func (g *gen) sampleList(item definitions.TypeRef) (items string, values []string) {
 	switch item.Type {
+	case definitions.ID:
+		kind := g.typeName(item.ReferenceName)
+		if g.idBase(item.ReferenceName) == definitions.String {
+			return kind + `("a"), ` + kind + `("b")`, []string{"a", "b"}
+		}
+
+		return kind + "(1), " + kind + "(2)", []string{"1", "2"}
 	case definitions.String:
 		return `"a", "b"`, []string{"a", "b"}
 	case definitions.Integer, definitions.Integer64:
@@ -575,6 +590,12 @@ func (g *gen) sampleJSON(t definitions.TypeRef) string {
 		return strconv.FormatInt(sampleTime.Unix(), 10)
 	case definitions.UnixMillis:
 		return strconv.FormatInt(sampleTime.UnixMilli(), 10)
+	case definitions.ID:
+		if g.idBase(t.ReferenceName) == definitions.String {
+			return `"s"`
+		}
+
+		return "7"
 	case definitions.Integer, definitions.Integer64:
 		return "7"
 	case definitions.Float, definitions.Double:
@@ -700,3 +721,12 @@ func quoteAll(values []string) string {
 var sampleTime = time.Date(2024, time.March, 4, 5, 6, 7, 0, time.UTC)
 
 const sampleTimeExpr = "time.Date(2024, time.March, 4, 5, 6, 7, 0, time.UTC)"
+
+// sampleID is a sample of a kind of id as Go source and as it is sent.
+func (g *gen) sampleID(kind, name string) (expr, wire string) {
+	if g.idBase(kind) == definitions.String {
+		return g.typeName(kind) + `("v-` + name + `")`, "v-" + name
+	}
+
+	return g.typeName(kind) + "(7)", "7"
+}
