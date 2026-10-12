@@ -1,4 +1,4 @@
-## Unreleased
+## v0.8.1 (2026-10-11)
 
 - **`doc.go` carries no generated header after all.** A linter skips a file marked generated and then misses the package comment, and flags the hand-written file beside it as lacking one, which sonarr's move found; the comment's first line says what wrote it, and every check knows that form.
 - **A test naming a method is not a tool wrapping it.** `check` counts only non-test files, and `-callers` with it.
