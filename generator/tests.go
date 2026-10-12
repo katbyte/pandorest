@@ -406,11 +406,18 @@ func (g *gen) testCall(o *definitions.Operation) testCallInfo {
 
 	if len(o.Options) > 0 {
 		var fields []string
+		placed := map[string]bool{}
 		for _, opt := range o.Options {
 			expr, wire, ok := g.sampleOption(opt)
 			if !ok {
 				continue
 			}
+			// a joined list is sent under its string's name (JoinedLists adds UserIdList beside UserId), and setting both sends both, so
+			// the test sets the first form alone and expects that one; the list's joining is proven where a list is the only form
+			if placed[opt.In+" "+opt.Name] {
+				continue
+			}
+			placed[opt.In+" "+opt.Name] = true
 			info.optNames[opt.Field] = opt.Name
 			fields = append(fields, opt.Field+": "+expr)
 			switch {

@@ -1047,6 +1047,38 @@ func TestShape(t *testing.T) {
 	}
 }
 
+// A joined list sits beside its string under one name on the wire, and the generated test sets one of the two, or it would send both
+// and expect each alone (embyfin's move, 70 generated tests failing).
+//
+//nolint:paralleltest // writes the testdata package the other tests would remove
+func TestJoinedLists(t *testing.T) {
+	spec, err := openapi.Parse([]byte(miniSpec))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := workarounds.JoinedLists(workarounds.About{Name: "mini-lists", Service: "mini", Bug: "userId carries several joined by commas"}, map[string]workarounds.Joined{"userId": {Of: "string"}}).Apply(spec); err != nil {
+		t.Fatal(err)
+	}
+	svc, err := importer.FromSpec(miniConfig, spec, []string{"mini-fix", "mini-lists"}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir := generateInModule(t, svc, generator.Options{})
+	goTool(t, dir, "vet")
+	goTool(t, dir, "test")
+
+	method := read(t, dir, "items_method_getitems.go")
+	for _, want := range []string{"UserIdList []string", `out.Append("userId", client.CSV(o.UserIdList))`} {
+		if !strings.Contains(method, want) {
+			t.Errorf("the method lacks %q:\n%s", want, method)
+		}
+	}
+	test := read(t, dir, "items_method_getitems_test.go")
+	if !strings.Contains(test, `"v-UserId"`) || strings.Contains(test, "UserIdList:") {
+		t.Errorf("the test does not set the string alone:\n%s", test)
+	}
+}
+
 // A credential named by a phrase is an argument called credential, and the
 // phrase words the refusal.
 func TestCredentialPhrase(t *testing.T) {
