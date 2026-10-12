@@ -247,7 +247,8 @@ func (c *coverage) reached(places []string, seen string) string {
 			never = append(never, p)
 		}
 	}
-	line := fmt.Sprintf("%s, %s %d", placesWord(len(places)), seen, len(places)-len(never))
+	// a place is a field of a record a GET answers, so a model no GET answers is not among them
+	line := fmt.Sprintf("%s in what a GET answers, %s %d", placesWord(len(places)), seen, len(places)-len(never))
 	if len(never) > 0 && len(never) < len(places) {
 		line += " (never: " + named(never) + ")"
 	}

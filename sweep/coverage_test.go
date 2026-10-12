@@ -37,7 +37,7 @@ func TestCoverage(t *testing.T) {
 	if want := map[string]placeKind{"box.State": enumPlace, "box.Seen": datePlace, "box.Open": boolPlace}; !reflect.DeepEqual(c.places, want) {
 		t.Errorf("places = %v, want %v", c.places, want)
 	}
-	if len(c.notes()) != 3 || !strings.Contains(c.notes()[0], "enum state: 1 place, a value seen at 0") {
+	if len(c.notes()) != 3 || !strings.Contains(c.notes()[0], "enum state: 1 place in what a GET answers, a value seen at 0") {
 		t.Errorf("notes before any answer = %q", c.notes())
 	}
 
@@ -50,7 +50,7 @@ func TestCoverage(t *testing.T) {
 	_ = json.Unmarshal([]byte(raw), &sent)
 	c.observe(sent, reflect.ValueOf(&model))
 	notes := strings.Join(c.notes(), "\n")
-	for _, want := range []string{"enum state: 1 place, a value seen at 1; listed values never seen: gone", "dates: 1 place, a value seen at 1", "booleans held by value: 1 place, carried by an answer at 1"} {
+	for _, want := range []string{"enum state: 1 place in what a GET answers, a value seen at 1; listed values never seen: gone", "dates: 1 place in what a GET answers, a value seen at 1", "booleans held by value: 1 place in what a GET answers, carried by an answer at 1"} {
 		if !strings.Contains(notes, want) {
 			t.Errorf("notes lack %q:\n%s", want, notes)
 		}
