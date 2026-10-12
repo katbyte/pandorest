@@ -1,4 +1,4 @@
-## Unreleased
+## v0.8.3 (2026-10-12)
 
 - **`Of` reads a model whose id is spelt `Id`.** Emby and Jellyfin capitalise theirs, and the lookup wanted the exact lower-case name, so the kind was refused as naming a model with no id. Embyfin got past it with a `Base` beside `Of`; that can go.
 - **The generated test of a joined list sets one form.** `JoinedLists` puts a list beside its string under one name on the wire, and the test set both on one call and then expected each alone, so every such test failed; on Emby that was 70 across 21 packages. The test now sets the string alone.
