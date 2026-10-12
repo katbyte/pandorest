@@ -699,6 +699,17 @@ func (g *gen) completeTest(o *definitions.Operation, call testCallInfo) string {
 	b.WriteString("\t\t\t\tt.Errorf(\"Complete = %d items over pages starting %q, want %d over %q\", len(result.Items), *starts, tc.items, tc.starts)\n")
 	b.WriteString("\t\t\t}\n\t\t})\n\t}\n}\n")
 
+	// Each hands out the same results one at a time, and a loop that stops asks for no page more
+	fmt.Fprintf(&b, "\nfunc TestOperation%sEach(t *testing.T) {\n\tt.Parallel()\n\n", o.Name)
+	fmt.Fprintf(&b, "\tc, starts := pagedServer(t, %q, %q, 0, 2)\n", startName, g.sampleJSON(p.ItemType))
+	b.WriteString("\tn := 0\n")
+	fmt.Fprintf(&b, "\tfor _, err := range c.%sEach(%s%s) {\n\t\tif err != nil {\n\t\t\tt.Fatal(err)\n\t\t}\n\t\tn++\n\t}\n", o.Name, args, options(1))
+	b.WriteString("\tif n != 2 || len(*starts) != 3 {\n\t\tt.Errorf(\"Each handed out %d results over %d pages, want 2 over 3\", n, len(*starts))\n\t}\n\n")
+	b.WriteString("\t// stopping after the first result asks for no page more\n")
+	fmt.Fprintf(&b, "\tc, starts = pagedServer(t, %q, %q, 0, 2)\n", startName, g.sampleJSON(p.ItemType))
+	fmt.Fprintf(&b, "\tfor range c.%sEach(%s%s) {\n\t\tbreak\n\t}\n", o.Name, args, options(1))
+	b.WriteString("\tif len(*starts) != 1 {\n\t\tt.Errorf(\"a stopped Each asked for %d pages, want 1\", len(*starts))\n\t}\n}\n")
+
 	return b.String()
 }
 

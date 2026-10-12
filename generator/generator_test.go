@@ -772,6 +772,55 @@ func TestPagerWithoutLimit(t *testing.T) {
 
 // A service that gives the layouts its dates are written in has them as Time
 // and Day: fields left out when zero, options sent in the first layout, and
+// A record with a Name and an Id gets GetName and GetId, so one piece of code
+// can take records of several types; a record lacking either, or one with a
+// field already so named, gets neither.
+//
+//nolint:paralleltest // writes the testdata package the other tests would remove
+func TestAccessors(t *testing.T) {
+	spec, err := openapi.Parse([]byte(`{"openapi": "3.0.1", "info": {"title": "Mini", "version": "1"}, "paths": {
+    "/items": {"get": {"operationId": "GetItems", "tags": ["Items"], "responses": {"200": {"content": {"application/json": {"schema": {"$ref": "#/components/schemas/Item"}}}}}}},
+    "/tags": {"get": {"operationId": "GetTags", "tags": ["Items"], "responses": {"200": {"content": {"application/json": {"schema": {"$ref": "#/components/schemas/Tag"}}}}}}},
+    "/odd": {"get": {"operationId": "GetOdd", "tags": ["Items"], "responses": {"200": {"content": {"application/json": {"schema": {"$ref": "#/components/schemas/Odd"}}}}}}}},
+  "components": {"schemas": {
+    "Item": {"type": "object", "properties": {"name": {"type": "string", "nullable": true}, "id": {"type": "integer"}}},
+    "Tag": {"type": "object", "properties": {"name": {"type": "string"}, "id": {"type": "string"}}},
+    "Odd": {"type": "object", "properties": {"name": {"type": "string"}, "id": {"type": "integer"}, "getName": {"type": "string"}}}}}}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg := config.Service{Name: "mini", Package: "mini", Naming: config.OperationIDNaming, Auth: "APIKey", KeepNull: []string{"Item.name"}}
+	svc, err := importer.FromSpec(cfg, spec, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir := generateInModule(t, svc, generator.Options{})
+	if err := os.WriteFile(filepath.Join(dir, "accessors_test.go"), []byte(`package mini
+
+import "testing"
+
+type named interface{ GetName() string }
+
+func TestAccessors(t *testing.T) {
+	t.Parallel()
+
+	for _, r := range []named{Item{}, Item{Name: new("a")}, Tag{Name: "b", Id: "t1"}} {
+		_ = r.GetName()
+	}
+	if (Item{Id: 3}).GetId() != 3 || (Tag{Id: "t1"}).GetId() != "t1" || (Item{}).GetName() != "" || (Item{Name: new("a")}).GetName() != "a" {
+		t.Error("an accessor does not answer its field")
+	}
+}
+`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	goTool(t, dir, "vet")
+	goTool(t, dir, "test")
+	if src := read(t, dir, "items_model_odd.go"); strings.Contains(src, "GetName()") {
+		t.Errorf("a record with a GetName field got an accessor:\n%s", src)
+	}
+}
+
 // the generated tests prove both on the wire.
 //
 //nolint:paralleltest // writes the testdata package the other tests would remove

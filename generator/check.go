@@ -32,6 +32,9 @@ func Check(svc *definitions.Service, dir string) (int, error) {
 		if o.Pageable != nil && !methods[o.Name+"Complete"] {
 			missing = append(missing, fmt.Sprintf("%sComplete (%s)", o.Name, o.Key()))
 		}
+		if o.Pageable != nil && !methods[o.Name+"Each"] {
+			missing = append(missing, fmt.Sprintf("%sEach (%s)", o.Name, o.Key()))
+		}
 	}
 	if len(missing) > 0 {
 		slices.Sort(missing)

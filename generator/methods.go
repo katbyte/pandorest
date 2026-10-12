@@ -30,6 +30,7 @@ func (g *gen) methodFile(o *definitions.Operation) string {
 	if o.Pageable != nil {
 		g.writeCompleteResult(&b, o)
 		g.writeCompleteMethod(&b, o, optionsType)
+		g.writeEachMethod(&b, o, optionsType)
 	}
 
 	return g.fileHeader(b.String())
@@ -64,6 +65,7 @@ func (g *gen) groupMethodFile(o *definitions.Operation) string {
 	g.writeMethod(&b, o, g.typeName(o.Name+"OperationResponse"), g.typeName(o.Name+"Options"))
 	if o.Pageable != nil {
 		g.writeCompleteMethod(&b, o, g.typeName(o.Name+"Options"))
+		g.writeEachMethod(&b, o, g.typeName(o.Name+"Options"))
 	}
 
 	return g.fileHeader(b.String())
@@ -484,6 +486,12 @@ func (g *gen) optionsVar(o *definitions.Operation) string {
 // variadic call was given, or the struct an inlined argument fills, refusing
 // more than one before any request is made.
 func (g *gen) writeOptionsPrelude(b *strings.Builder, o *definitions.Operation, method, optionsType string) {
+	g.writeOptionsPreludeFailing(b, o, method, optionsType, func(expr string) string { return "err = " + expr + "\n\t\treturn" })
+}
+
+// writeOptionsPreludeFailing is writeOptionsPrelude with fail saying how a
+// refusal is returned: assigned to err in a method, yielded in a pager.
+func (g *gen) writeOptionsPreludeFailing(b *strings.Builder, o *definitions.Operation, method, optionsType string, fail func(expr string) string) {
 	switch {
 	case g.inline(o):
 		opt := &o.Options[0]
@@ -495,11 +503,11 @@ func (g *gen) writeOptionsPrelude(b *strings.Builder, o *definitions.Operation, 
 		case opt.Type.Type == definitions.List:
 			fmt.Fprintf(b, "\tif len(%s) > 0 {\n\t\toption.%s = %s\n\t}\n\n", arg, opt.Field, arg)
 		default:
-			fmt.Fprintf(b, "\tif len(%[1]s) > 1 {\n\t\terr = fmt.Errorf(\"%[2]s takes one %[1]s at most, not %%d\", len(%[1]s))\n\t\treturn\n\t}\n", arg, method)
+			fmt.Fprintf(b, "\tif len(%s) > 1 {\n\t\t%s\n\t}\n", arg, fail(fmt.Sprintf("fmt.Errorf(\"%s takes one %s at most, not %%d\", len(%s))", method, arg, arg)))
 			fmt.Fprintf(b, "\tif len(%s) == 1 {\n\t\toption.%s = %s\n\t}\n\n", arg, opt.Field, held(opt, arg+"[0]"))
 		}
 	case g.optional(o):
-		fmt.Fprintf(b, "\tif len(options) > 1 {\n\t\terr = fmt.Errorf(\"%s takes one options struct at most, not %%d\", len(options))\n\t\treturn\n\t}\n", method)
+		fmt.Fprintf(b, "\tif len(options) > 1 {\n\t\t%s\n\t}\n", fail(fmt.Sprintf("fmt.Errorf(\"%s takes one options struct at most, not %%d\", len(options))", method)))
 		fmt.Fprintf(b, "\tvar option %s\n\tif len(options) == 1 {\n\t\toption = options[0]\n\t}\n\n", optionsType)
 	}
 }
@@ -651,19 +659,7 @@ func (g *gen) writeCompleteMethod(b *strings.Builder, o *definitions.Operation, 
 	fmt.Fprintf(b, "func (c Client) %s(%s) (result %s, err error) {\n", method, strings.Join(append([]string{"ctx context.Context"}, params...), ", "), resultType)
 	g.writeOptionsPrelude(b, o, method, optionsType)
 	ov := g.optionsVar(o)
-	if p.LimitOption == "" {
-		// the server's page size, learnt from the first page
-		b.WriteString("\tlimit := 0\n")
-	} else {
-		fmt.Fprintf(b, "\tlimit := client.DefaultPageSize\n\tif %[2]s.%[1]s != nil && *%[2]s.%[1]s > 0 {\n\t\tlimit = *%[2]s.%[1]s\n\t}\n", p.LimitOption, ov)
-		fmt.Fprintf(b, "\t%s.%s = &limit\n", ov, p.LimitOption)
-	}
-	if p.ByPage {
-		fmt.Fprintf(b, "\tnumber := 1\n\tif %[2]s.%[1]s != nil && *%[2]s.%[1]s > 0 {\n\t\tnumber = *%[2]s.%[1]s\n\t}\n", p.StartIndexOption, ov)
-		fmt.Fprintf(b, "\t%s.%s = &number\n", ov, p.StartIndexOption)
-	} else {
-		fmt.Fprintf(b, "\tstart := 0\n\tif %[2]s.%[1]s != nil {\n\t\tstart = *%[2]s.%[1]s\n\t}\n", p.StartIndexOption, ov)
-	}
+	writePageSetup(b, p, ov, "\t")
 	b.WriteString("\tfor {\n")
 	fmt.Fprintf(b, "\t\tvar page %s\n", g.typeName(o.Name+"OperationResponse"))
 	fmt.Fprintf(b, "\t\tpage, err = c.%s(%s)\n", o.Name, strings.Join(append([]string{"ctx"}, call...), ", "))
@@ -671,26 +667,86 @@ func (g *gen) writeCompleteMethod(b *strings.Builder, o *definitions.Operation, 
 	b.WriteString("\t\tif err != nil {\n\t\t\terr = fmt.Errorf(\"loading results: %w\", err)\n\t\t\treturn\n\t\t}\n")
 	fmt.Fprintf(b, "\t\tif page.Answer == nil || len(page.Answer.%s) == 0 {\n\t\t\treturn\n\t\t}\n", p.ItemsField)
 	fmt.Fprintf(b, "\t\tresult.Items = append(result.Items, page.Answer.%s...)\n", p.ItemsField)
+	writePageEnd(b, p, ov, "\t\t", "len(result.Items)")
+	b.WriteString("\t}\n}\n")
+}
+
+// writeEachMethod writes a list's pager that hands out one result at a time
+// as a range-over-func, so that a loop which stops ends the paging.
+func (g *gen) writeEachMethod(b *strings.Builder, o *definitions.Operation, optionsType string) {
+	p := o.Pageable
+	method := o.Name + "Each"
+	itemType := g.goType(p.ItemType)
+	g.declare("Client."+method, "operation "+o.Name)
+	params, call := g.arguments(o, optionsType)
+
+	fmt.Fprintf(b, "\n// %s calls %s page by page as its results are ranged over, so a\n", method, o.Name)
+	b.WriteString("// loop that stops ends the paging:\n//\n")
+	fmt.Fprintf(b, "//\tfor item, err := range c.%s(ctx) {\n//\t\tif err != nil {\n//\t\t\treturn err\n//\t\t}\n//\t\tif found(item) {\n//\t\t\tbreak\n//\t\t}\n//\t}\n//\n", method)
+	fmt.Fprintf(b, "// An error is the last pair handed out, with a zero %s. The pages are asked for as %sComplete asks for them.\n", strings.TrimPrefix(itemType, "*"), o.Name)
+	fmt.Fprintf(b, "func (c Client) %s(%s) iter.Seq2[%s, error] {\n", method, strings.Join(append([]string{"ctx context.Context"}, params...), ", "), itemType)
+	fmt.Fprintf(b, "\treturn func(yield func(%s, error) bool) {\n", itemType)
+	fmt.Fprintf(b, "\t\tvar zero %s\n", itemType)
+	g.writeOptionsPreludeFailing(b, o, method, optionsType, func(expr string) string { return "yield(zero, " + expr + ")\n\t\t\treturn" })
+	ov := g.optionsVar(o)
+	writePageSetup(b, p, ov, "\t\t")
+	if p.ByPage && p.LimitOption == "" {
+		b.WriteString("\t\tloaded := 0\n")
+	}
+	b.WriteString("\t\tfor {\n")
+	fmt.Fprintf(b, "\t\t\tpage, err := c.%s(%s)\n", o.Name, strings.Join(append([]string{"ctx"}, call...), ", "))
+	b.WriteString("\t\t\tif err != nil {\n\t\t\t\tyield(zero, fmt.Errorf(\"loading results: %w\", err))\n\t\t\t\treturn\n\t\t\t}\n")
+	fmt.Fprintf(b, "\t\t\tif page.Answer == nil || len(page.Answer.%s) == 0 {\n\t\t\t\treturn\n\t\t\t}\n", p.ItemsField)
+	fmt.Fprintf(b, "\t\t\tfor _, item := range page.Answer.%s {\n\t\t\t\tif !yield(item, nil) {\n\t\t\t\t\treturn\n\t\t\t\t}\n\t\t\t}\n", p.ItemsField)
+	if p.ByPage && p.LimitOption == "" {
+		fmt.Fprintf(b, "\t\t\tloaded += len(page.Answer.%s)\n", p.ItemsField)
+	}
+	writePageEnd(b, p, ov, "\t\t\t", "loaded")
+	b.WriteString("\t\t}\n\t}\n}\n")
+}
+
+// writePageSetup writes the page size and the first page a walk starts
+// from, into the options the walk sends.
+func writePageSetup(b *strings.Builder, p *definitions.Pageable, ov, in string) {
+	if p.LimitOption == "" {
+		// the server's page size, learnt from the first page
+		fmt.Fprintf(b, "%slimit := 0\n", in)
+	} else {
+		fmt.Fprintf(b, "%[3]slimit := client.DefaultPageSize\n%[3]sif %[2]s.%[1]s != nil && *%[2]s.%[1]s > 0 {\n%[3]s\tlimit = *%[2]s.%[1]s\n%[3]s}\n", p.LimitOption, ov, in)
+		fmt.Fprintf(b, "%s%s.%s = &limit\n", in, ov, p.LimitOption)
+	}
+	if p.ByPage {
+		fmt.Fprintf(b, "%[3]snumber := 1\n%[3]sif %[2]s.%[1]s != nil && *%[2]s.%[1]s > 0 {\n%[3]s\tnumber = *%[2]s.%[1]s\n%[3]s}\n", p.StartIndexOption, ov, in)
+		fmt.Fprintf(b, "%s%s.%s = &number\n", in, ov, p.StartIndexOption)
+	} else {
+		fmt.Fprintf(b, "%[3]sstart := 0\n%[3]sif %[2]s.%[1]s != nil {\n%[3]s\tstart = *%[2]s.%[1]s\n%[3]s}\n", p.StartIndexOption, ov, in)
+	}
+}
+
+// writePageEnd writes how a walk ends after a page, and moves to the next:
+// a short page is the last, and so is reaching the total when the server
+// reports one. loaded is the expression for how many results the walk has
+// handed out, which the walk by page number without a page size compares.
+func writePageEnd(b *strings.Builder, p *definitions.Pageable, ov, in, loaded string) {
 	switch {
 	case p.ByPage && p.LimitOption == "":
-		b.WriteString("\t\t// the first page says how long a page is; a shorter one is the last, and\n")
-		b.WriteString("\t\t// so is the page that reaches the total, when the server reports one\n")
-		fmt.Fprintf(b, "\t\tif limit == 0 {\n\t\t\tlimit = len(page.Answer.%s)\n\t\t}\n", p.ItemsField)
-		fmt.Fprintf(b, "\t\tif len(page.Answer.%[1]s) < limit || page.Answer.%[2]s > 0 && len(result.Items) >= page.Answer.%[2]s {\n\t\t\treturn\n\t\t}\n", p.ItemsField, p.TotalField)
-		b.WriteString("\t\tnumber++\n")
+		fmt.Fprintf(b, "%s// the first page says how long a page is; a shorter one is the last, and\n", in)
+		fmt.Fprintf(b, "%s// so is the page that reaches the total, when the server reports one\n", in)
+		fmt.Fprintf(b, "%[2]sif limit == 0 {\n%[2]s\tlimit = len(page.Answer.%[1]s)\n%[2]s}\n", p.ItemsField, in)
+		fmt.Fprintf(b, "%[3]sif len(page.Answer.%[1]s) < limit || page.Answer.%[2]s > 0 && %[4]s >= page.Answer.%[2]s {\n%[3]s\treturn\n%[3]s}\n", p.ItemsField, p.TotalField, in, loaded)
+		fmt.Fprintf(b, "%snumber++\n", in)
 	case p.ByPage:
-		b.WriteString("\t\t// a short page is the last; so is the page that reaches the total, when\n")
-		b.WriteString("\t\t// the server reports one\n")
-		fmt.Fprintf(b, "\t\tif len(page.Answer.%[1]s) < limit || page.Answer.%[2]s > 0 && number*limit >= page.Answer.%[2]s {\n\t\t\treturn\n\t\t}\n", p.ItemsField, p.TotalField)
+		fmt.Fprintf(b, "%s// a short page is the last; so is the page that reaches the total, when\n", in)
+		fmt.Fprintf(b, "%s// the server reports one\n", in)
+		fmt.Fprintf(b, "%[3]sif len(page.Answer.%[1]s) < limit || page.Answer.%[2]s > 0 && number*limit >= page.Answer.%[2]s {\n%[3]s\treturn\n%[3]s}\n", p.ItemsField, p.TotalField, in)
 		// options holds a pointer to number, so the next call asks for the next page
-		b.WriteString("\t\tnumber++\n")
+		fmt.Fprintf(b, "%snumber++\n", in)
 	default:
-		fmt.Fprintf(b, "\t\tstart += len(page.Answer.%s)\n\t\t%s.%s = &start\n", p.ItemsField, ov, p.StartIndexOption)
-		b.WriteString("\t\t// a short page is the last; so is reaching the total, when the server\n")
-		b.WriteString("\t\t// reports one (a list may report 0 whatever it holds)\n")
-		fmt.Fprintf(b, "\t\tif len(page.Answer.%[1]s) < limit || page.Answer.%[2]s > 0 && start >= page.Answer.%[2]s {\n\t\t\treturn\n\t\t}\n", p.ItemsField, p.TotalField)
+		fmt.Fprintf(b, "%[4]sstart += len(page.Answer.%[1]s)\n%[4]s%[2]s.%[3]s = &start\n", p.ItemsField, ov, p.StartIndexOption, in)
+		fmt.Fprintf(b, "%s// a short page is the last; so is reaching the total, when the server\n", in)
+		fmt.Fprintf(b, "%s// reports one (a list may report 0 whatever it holds)\n", in)
+		fmt.Fprintf(b, "%[3]sif len(page.Answer.%[1]s) < limit || page.Answer.%[2]s > 0 && start >= page.Answer.%[2]s {\n%[3]s\treturn\n%[3]s}\n", p.ItemsField, p.TotalField, in)
 	}
-	b.WriteString("\t}\n}\n")
 }
 
 // dateAs is the call that renders a date for one parameter: in the layout the

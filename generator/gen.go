@@ -360,6 +360,7 @@ func (g *gen) fileHeader(body string) string {
 		{"errors", "errors."},
 		{"fmt", "fmt."},
 		{"io", "io."},
+		{"iter", "iter."},
 		{"net/http", "http."},
 		{"net/http/httptest", "httptest."},
 		{"net/url", "url."},
