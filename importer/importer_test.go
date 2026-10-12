@@ -1176,7 +1176,7 @@ func TestIDs(t *testing.T) {
 	t.Parallel()
 
 	const doc = `{"openapi": "3.0.1", "info": {"title": "Arr", "version": "1"}, "paths": {
-    "/series": {"get": {"operationId": "GetSeries", "tags": ["Series"], "parameters": [{"name": "tvdbId", "in": "query", "schema": {"type": "integer"}}, {"name": "ids", "in": "query", "schema": {"type": "string"}}],
+    "/series": {"get": {"operationId": "GetSeries", "tags": ["Series"], "parameters": [{"name": "tvdbId", "in": "query", "schema": {"type": "integer"}}, {"name": "ids", "in": "query", "schema": {"type": "string"}}, {"name": "tags", "in": "query", "schema": {"type": "string"}}],
       "responses": {"200": {"content": {"application/json": {"schema": {"type": "array", "items": {"$ref": "#/components/schemas/SeriesResource"}}}}}}}},
     "/series/{id}": {"get": {"operationId": "GetSeriesById", "tags": ["Series"], "parameters": [{"name": "id", "in": "path", "required": true, "schema": {"type": "integer"}}],
       "responses": {"200": {"content": {"application/json": {"schema": {"$ref": "#/components/schemas/SeriesResource"}}}}}},
@@ -1203,7 +1203,7 @@ func TestIDs(t *testing.T) {
 	cfg := config.Service{Name: "arr", Package: "arr", Naming: config.OperationIDNaming, Auth: "APIKey", IDs: []config.ID{
 		{Name: "SeriesID", Of: []string{"SeriesResource"}, Names: []string{"seriesId"}, Joined: []string{"ids"}, In: []string{"SeriesResource .parentId"}},
 		{Name: "EpisodeID", Of: []string{"EpisodeResource"}, Names: []string{"episodeIds"}},
-		{Name: "TagID", Of: []string{"TagResource"}, Names: []string{"tags"}},
+		{Name: "TagID", Of: []string{"TagResource"}, Names: []string{"tags"}, Joined: []string{"tags"}},
 		{Name: "TvdbID", Base: "int", Names: []string{"tvdbId"}, Except: []string{"GET /series tvdbId"}},
 	}, Plain: []string{"downloadId", "GetCommandByIdAnswer .id"}}
 	svc, err := FromSpec(cfg, spec, nil, func(msg string) { logged = append(logged, msg) })
@@ -1251,6 +1251,9 @@ func TestIDs(t *testing.T) {
 	}
 	if got := opts[0].Type; got.Type != definitions.Integer {
 		t.Errorf("GET /series tvdbId, Except, = %+v", got)
+	}
+	if got := opts[2].Type; got.Type != definitions.List || *got.NestedItem != id("TagID") || !opts[2].CommaSeparated {
+		t.Errorf("GET /series tags, a name in both Names and Joined, = %+v comma %t", got, opts[2].CommaSeparated)
 	}
 	if got := ops["GetEpisode"].Options[1].Type; got.Type != definitions.List || *got.NestedItem != id("EpisodeID") {
 		t.Errorf("GET /episode episodeIds = %+v", got)
