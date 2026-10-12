@@ -153,7 +153,7 @@ A document bug is fixed with a workaround, kept in the repository that vendors t
 
 #### Ready-made workarounds
 
-The same few bugs are in most documents, so the workarounds for them are here, ready-made: a repository says which operations and why, and the patching, and the check that the bug is still there, are written once. Each is a `Workaround` like one written by hand and passes `Verify` the same way.
+The same few bugs are in most documents, so the workarounds for them are here, the default ones: a repository says which operations and why, and the patching, and the check that the bug is still there, are written once. Each is a `Workaround` like one written by hand and passes `Verify` the same way.
 
 ```go
 var All = []workarounds.Workaround{

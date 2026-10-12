@@ -10,7 +10,7 @@ import (
 	"github.com/katbyte/pandorest/openapi"
 )
 
-// buggy has one of each bug a ready-made workaround fixes: GETs that declare
+// buggy has one of each bug a default workaround fixes: GETs that declare
 // no answer, answers and statuses that are wrong, a parameter and a field
 // left out, and the web interface's page.
 const buggy = `{"openapi": "3.0.1", "info": {"title": "Buggy", "version": "1"}, "paths": {
@@ -38,8 +38,8 @@ func about(name, bug string) workarounds.About {
 	return workarounds.About{Name: "buggy-" + name, Service: "buggy", Bug: bug}
 }
 
-// readyMade is one of each, as a repository would list them.
-func readyMade() []workarounds.Workaround {
+// defaults is one of each, as a repository would list them.
+func defaults() []workarounds.Workaround {
 	return []workarounds.Workaround{
 		workarounds.NotAPI(about("ui-routes", "the document includes the web interface's page"), "/"),
 		workarounds.UndeclaredAnswers(about("undeclared-answers", "five GETs declare a 200 with no content"), map[string]workarounds.Answer{
@@ -70,13 +70,13 @@ func readyMade() []workarounds.Workaround {
 	}
 }
 
-// Each ready-made workaround passes the test one written by hand must, and
+// Each default workaround passes the test one written by hand must, and
 // leaves the document saying what the server does.
-func TestReadyMade(t *testing.T) {
+func TestDefaultWorkarounds(t *testing.T) {
 	t.Parallel()
 
-	if err := workarounds.Verify(readyMade(), loadBuggy); err != nil {
-		t.Fatalf("Verify of the ready-made workarounds = %v", err)
+	if err := workarounds.Verify(defaults(), loadBuggy); err != nil {
+		t.Fatalf("Verify of the default workarounds = %v", err)
 	}
 
 	spec, err := loadBuggy("buggy")
@@ -84,7 +84,7 @@ func TestReadyMade(t *testing.T) {
 		t.Fatal(err)
 	}
 	var logged []string
-	applied, err := workarounds.Apply(readyMade(), "buggy", spec, func(msg string) { logged = append(logged, msg) })
+	applied, err := workarounds.Apply(defaults(), "buggy", spec, func(msg string) { logged = append(logged, msg) })
 	if err != nil || len(applied) != 11 || applied[0] != "buggy-ui-routes" {
 		t.Fatalf("Apply = %v, %v", applied, err)
 	}
@@ -175,9 +175,9 @@ func TestReadyMade(t *testing.T) {
 	}
 }
 
-// What a ready-made workaround says when the bug it is for is not in the
+// What a default workaround says when the bug it is for is not in the
 // document, or it was written wrong.
-func TestReadyMadeFailures(t *testing.T) {
+func TestDefaultWorkaroundFailures(t *testing.T) {
 	t.Parallel()
 
 	a := about("x", "a bug")
@@ -254,7 +254,7 @@ func TestAbout(t *testing.T) {
 
 	w := workarounds.NotAPI(workarounds.About{Name: "buggy-ui-routes", Service: "buggy", Bug: "the page"}, "/")
 	if w.Name() != "buggy-ui-routes" || w.Service() != "buggy" || w.Bug() != "the page" {
-		t.Errorf("a ready-made workaround = %s, %s, %s", w.Name(), w.Service(), w.Bug())
+		t.Errorf("a default workaround = %s, %s, %s", w.Name(), w.Service(), w.Bug())
 	}
 }
 

@@ -13,7 +13,7 @@ import (
 	"github.com/katbyte/pandorest/openapi"
 )
 
-// The ready-made workarounds are for the bugs every document seems to have:
+// The default workarounds are for the bugs every document seems to have:
 // an operation that declares no answer, or the wrong one, or the wrong
 // status; a parameter the server reads or a field it sends that the document
 // leaves out; a path that is not the API's. A repository says which
@@ -21,32 +21,32 @@ import (
 // there are here, once, in place of a copy in each repository. Each is a
 // Workaround like one written by hand, and passes Verify the same way.
 
-// About is what a ready-made workaround is called, the service it is for and
+// About is what a default workaround is called, the service it is for and
 // the bug it fixes: what one written by hand says with its Name, Service and
 // Bug methods.
 type About struct {
 	Name, Service, Bug string
 }
 
-type readyMade struct {
+type defaultWorkaround struct {
 	about About
 	apply func(spec *openapi.Spec, note func(string)) error
 }
 
-func (r readyMade) Name() string                   { return r.about.Name }
-func (r readyMade) Service() string                { return r.about.Service }
-func (r readyMade) Bug() string                    { return r.about.Bug }
-func (r readyMade) Apply(spec *openapi.Spec) error { return r.apply(spec, func(string) {}) }
+func (r defaultWorkaround) Name() string                   { return r.about.Name }
+func (r defaultWorkaround) Service() string                { return r.about.Service }
+func (r defaultWorkaround) Bug() string                    { return r.about.Bug }
+func (r defaultWorkaround) Apply(spec *openapi.Spec) error { return r.apply(spec, func(string) {}) }
 
 // ApplyNoting applies the workaround and says what it reached, a note per
 // name ("createdAt in 60 places"), which the import logs: a name that is a
 // date or an enum in fewer places than expected is seen there rather than by
 // reading generated files.
-func (r readyMade) ApplyNoting(spec *openapi.Spec, note func(string)) error {
+func (r defaultWorkaround) ApplyNoting(spec *openapi.Spec, note func(string)) error {
 	return r.apply(spec, note)
 }
 
-// Answer is what an operation answers, as a ready-made workaround says it:
+// Answer is what an operation answers, as a default workaround says it:
 // one of JSON, JSONString, Model, ListOf, Shape, File and Text.
 type Answer struct {
 	kind   answerKind
@@ -223,7 +223,7 @@ func success(op *openapi.Operation) *openapi.Response {
 // or a file: answers says what each does, by method and path. It fails for
 // any that declares its answer now.
 func UndeclaredAnswers(about About, answers map[string]Answer) Workaround {
-	return readyMade{about, func(spec *openapi.Spec, _ func(string)) error {
+	return defaultWorkaround{about, func(spec *openapi.Spec, _ func(string)) error {
 		if len(answers) == 0 {
 			return errors.New("it names no operations")
 		}
@@ -279,7 +279,7 @@ func ListDeclaredAsOne(schema string) Correction {
 // declares what its correction says, which is how a document that was fixed,
 // or changed again, is noticed.
 func WrongAnswers(about About, corrections map[string]Correction) Workaround {
-	return readyMade{about, func(spec *openapi.Spec, _ func(string)) error {
+	return defaultWorkaround{about, func(spec *openapi.Spec, _ func(string)) error {
 		if len(corrections) == 0 {
 			return errors.New("it names no operations")
 		}
@@ -318,7 +318,7 @@ func WrongAnswers(about About, corrections map[string]Correction) Workaround {
 // operations that give it, by method and path. It fails for any that no
 // longer documents the declared status, or documents the other already.
 func WrongStatus(about About, declared int, answers map[int][]string) Workaround {
-	return readyMade{about, func(spec *openapi.Spec, _ func(string)) error {
+	return defaultWorkaround{about, func(spec *openapi.Spec, _ func(string)) error {
 		from, moved := strconv.Itoa(declared), 0
 		for _, status := range slices.Sorted(maps.Keys(answers)) {
 			to := strconv.Itoa(status)
@@ -351,7 +351,7 @@ func WrongStatus(about About, declared int, answers map[int][]string) Workaround
 // one of them. A header named Accept gives the caller the say over what one
 // call asks for (see Param).
 func UndeclaredParameters(about About, targets []string, params ...Param) Workaround {
-	return readyMade{about, func(spec *openapi.Spec, _ func(string)) error {
+	return defaultWorkaround{about, func(spec *openapi.Spec, _ func(string)) error {
 		if len(targets) == 0 || len(params) == 0 {
 			return errors.New("it names no operations or no parameters")
 		}
@@ -365,7 +365,7 @@ func UndeclaredParameters(about About, targets []string, params ...Param) Workar
 // word: properties says, by component schema, what to add. It fails for any
 // the schema declares now.
 func UndeclaredProperties(about About, properties map[string]map[string]*openapi.Schema) Workaround {
-	return readyMade{about, func(spec *openapi.Spec, _ func(string)) error {
+	return defaultWorkaround{about, func(spec *openapi.Spec, _ func(string)) error {
 		added := 0
 		for _, name := range openapi.SortedKeys(properties) {
 			schema := spec.Components.Schemas[name]
@@ -397,7 +397,7 @@ func UndeclaredProperties(about About, properties map[string]map[string]*openapi
 // browser and nothing a client reads. They are taken out of the document. It
 // fails for any that is not there.
 func NotAPI(about About, paths ...string) Workaround {
-	return readyMade{about, func(spec *openapi.Spec, _ func(string)) error {
+	return defaultWorkaround{about, func(spec *openapi.Spec, _ func(string)) error {
 		if len(paths) == 0 {
 			return errors.New("it names no paths")
 		}
@@ -453,7 +453,7 @@ func UndeclaredDaysExcept(about About, except map[string][]string, names ...stri
 func UndeclaredUnixDates(about About, unit string, names ...string) Workaround {
 	format, ok := map[string]string{"seconds": openapi.FormatUnixSeconds, "milliseconds": openapi.FormatUnixMillis}[unit]
 	if !ok {
-		return readyMade{about, func(*openapi.Spec, func(string)) error {
+		return defaultWorkaround{about, func(*openapi.Spec, func(string)) error {
 			return fmt.Errorf("unit %q is not seconds or milliseconds", unit)
 		}}
 	}
@@ -469,7 +469,7 @@ func declareDates(about About, format string, except map[string][]string, names 
 // declare marks every property of the names that has the type given with the format, except where
 // except says not to, and fails for a name that marks nothing or an exception that excludes nothing.
 func declare(about About, typ, format string, except map[string][]string, names []string) Workaround {
-	return readyMade{about, func(spec *openapi.Spec, note func(string)) error {
+	return defaultWorkaround{about, func(spec *openapi.Spec, note func(string)) error {
 		if len(names) == 0 {
 			return errors.New("it names no properties")
 		}
@@ -536,7 +536,7 @@ type Enum struct {
 // parameter of the name at it. It fails for a name nothing has, for an enum
 // with no values, and for a type name a different schema already has.
 func UndeclaredEnums(about About, enums map[string]Enum) Workaround {
-	return readyMade{about, func(spec *openapi.Spec, note func(string)) error {
+	return defaultWorkaround{about, func(spec *openapi.Spec, note func(string)) error {
 		if len(enums) == 0 {
 			return errors.New("it names no properties")
 		}
@@ -624,7 +624,7 @@ type Joined struct {
 // that is not an enum schema of the document or "string", and an In that
 // matches nothing.
 func JoinedLists(about About, lists map[string]Joined) Workaround {
-	return readyMade{about, func(spec *openapi.Spec, note func(string)) error {
+	return defaultWorkaround{about, func(spec *openapi.Spec, note func(string)) error {
 		if len(lists) == 0 {
 			return errors.New("it names no parameters")
 		}
@@ -699,7 +699,7 @@ func JoinedLists(about About, lists map[string]Joined) Workaround {
 // text, a log file's name, is left alone. It fails when it reaches nothing,
 // which is how a document that was fixed is noticed.
 func NumberedPathIDs(about About) Workaround {
-	return readyMade{about, func(spec *openapi.Spec, note func(string)) error {
+	return defaultWorkaround{about, func(spec *openapi.Spec, note func(string)) error {
 		marked := 0
 		for _, path := range openapi.SortedKeys(spec.Paths) {
 			methods := spec.Paths[path].Methods()

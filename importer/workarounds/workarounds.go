@@ -56,7 +56,7 @@ func Apply(all []Workaround, service string, spec *openapi.Spec, log func(string
 		if noting, ok := w.(interface {
 			ApplyNoting(*openapi.Spec, func(string)) error
 		}); ok {
-			// a ready-made workaround says what it reached
+			// a default workaround says what it reached
 			err = noting.ApplyNoting(spec, func(n string) { notes = append(notes, n) })
 		} else {
 			err = w.Apply(spec)
