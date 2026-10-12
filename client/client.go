@@ -544,3 +544,12 @@ func textAt(top map[string]json.RawMessage, field string) (string, bool) {
 
 	return text, ok
 }
+
+// ErrCommandFailed and ErrCommandRunning are what a generated WaitForCommand
+// wraps its two refusals in, for errors.Is: the server said the command
+// failed, or it was still running when the wait ran out, which a caller may
+// treat as an answer rather than a failure.
+var (
+	ErrCommandFailed  = errors.New("the command failed")
+	ErrCommandRunning = errors.New("the command is still running")
+)

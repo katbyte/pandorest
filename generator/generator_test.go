@@ -1180,7 +1180,7 @@ func TestCommands(t *testing.T) {
 
 	for file, wants := range map[string][]string{
 		"command_method_refreshseries.go": {"func (c Client) RefreshSeries(ctx context.Context, input RefreshSeriesCommand) (result RefreshSeriesResponse, err error) {", "\tinput.Name = \"RefreshSeries\"\n", "func (c Client) RefreshSeriesAndWait(ctx context.Context, input RefreshSeriesCommand, wait time.Duration) (result GetCommandByIdResponse, err error) {", "return c.WaitForCommand(ctx, int(queued.Answer.Id), wait)"},
-		"command_method_postcommand.go":   {"func (c Client) WaitForCommand(ctx context.Context, id int, wait time.Duration) (result GetCommandByIdResponse, err error) {", `if slices.Contains([]string{"failed", "aborted"}, status) {`, `if slices.Contains([]string{"completed", "failed", "aborted"}, status) {`, "string(result.Answer.Message)"},
+		"command_method_postcommand.go":   {"func (c Client) WaitForCommand(ctx context.Context, id int, wait time.Duration) (result GetCommandByIdResponse, err error) {", `if slices.Contains([]string{"failed", "aborted"}, status) {`, `if slices.Contains([]string{"completed", "failed", "aborted"}, status) {`, "string(result.Answer.Message)", `string(result.Answer.Name)`, "client.ErrCommandFailed)", "client.ErrCommandRunning)"},
 		"command_model_rsssynccommand.go": {"type RssSyncCommand struct {", "Name string `json:\"name,omitempty\"`"},
 	} {
 		src := read(t, dir, file)
