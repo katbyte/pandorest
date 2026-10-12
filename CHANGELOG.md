@@ -1,4 +1,4 @@
-## Unreleased
+## v0.7.0 (2026-10-11)
 
 - the response is `<Name>Response`, no longer `<Name>OperationResponse`, and a model the importer invents for an answer the document declares inline is `<Name>Answer`, no longer `<Name>Response`: the wrapper every method returns gets the plain name, and the record inside it is named for the field it sits in. A caller renames by one replacement each (`OperationResponse` to `Response`; for TMDB and Dockhand, whose answers are nearly all inline, the 150 and 320 invented models by `<Op>Response` to `<Op>Answer`); Emby, Jellyfin and the *arr servers name their answers in their documents and keep every model name
 - `workarounds.Verify` checks each workaround against the document as the workarounds before it in the list have left it, in order, which is how the import applies them, so a workaround that depends on a shape an earlier one declared (dockhand's enums on answers its own workarounds add, 10 of its 16 groups) passes where it failed against the raw document; the no-panic check stays on the raw one
