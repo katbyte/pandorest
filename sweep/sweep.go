@@ -173,6 +173,12 @@ type Sweep struct {
 	// for, by model and key. Without it only an object lost whole is a
 	// failure, since servers send many fields their documents leave out.
 	Strict bool
+	// MissingIDs are, per kind of id the service declares, a value of the
+	// right shape that nothing on the server has: the sweep calls the first
+	// GET whose path takes the kind with it and notes what the server
+	// answers (a 404, or a 200 with nothing), so the service's own file can
+	// say it rather than each tool learning it from the server.
+	MissingIDs map[string]string
 	// Timeout is how long one operation gets; zero is DefaultTimeout.
 	Timeout time.Duration
 	// EventWait is how long an event stream gets, once it has answered, to
@@ -240,12 +246,56 @@ func (s Sweep) Run(t *testing.T) {
 		t.Errorf("the case for %s names no GET operation", name)
 	}
 
-	// what the run came to, and what its answers left unproven
-	report.Notes = cov.notes()
+	// what a missing id of each kind gets, what the run came to, and what its answers left unproven
+	for _, kind := range slices.Sorted(maps.Keys(s.MissingIDs)) {
+		ctx, cancel := context.WithTimeout(t.Context(), cmp.Or(s.Timeout, DefaultTimeout))
+		report.Notes = append(report.Notes, s.probeMissing(ctx, kind, s.MissingIDs[kind]))
+		cancel()
+	}
+	report.Notes = append(report.Notes, cov.notes()...)
 	t.Log(report.Summary(s.Definitions.Name))
 	for _, note := range report.Notes {
 		t.Log(s.Definitions.Name + ": " + note)
 	}
+}
+
+// probeMissing calls the first GET whose path takes the kind with an id nothing has, and says what the server answered.
+func (s Sweep) probeMissing(ctx context.Context, kind, id string) string {
+	for _, op := range s.Definitions.Operations() {
+		if op.Method != http.MethodGet {
+			continue
+		}
+		for _, p := range op.PathParameters {
+			if p.Type.Type != definitions.ID || p.Type.ReferenceName != kind {
+				continue
+			}
+			c := s.Cases[op.Name]
+			c.Path = maps.Clone(c.Path)
+			if c.Path == nil {
+				c.Path = map[string]string{}
+			}
+			c.Path[p.Name] = id
+			args, err := s.arguments(ctx, op, c)
+			if err != nil {
+				return fmt.Sprintf("a missing %s could not be probed through %s: %v", kind, op.Key(), err)
+			}
+			called, hangUp := context.WithCancel(ctx)
+			a, err := s.call(called, hangUp, op, args, nil)
+			hangUp()
+			switch {
+			case err != nil && a.status != 0:
+				return fmt.Sprintf("a missing %s answers HTTP %d (%s)", kind, a.status, op.Key())
+			case err != nil:
+				return fmt.Sprintf("a missing %s fails %s: %v", kind, op.Key(), err)
+			case a.empty:
+				return fmt.Sprintf("a missing %s answers %s with nothing", kind, op.Key())
+			default:
+				return fmt.Sprintf("a missing %s answers %s with something", kind, op.Key())
+			}
+		}
+	}
+
+	return fmt.Sprintf("no GET takes a %s in its path, so a missing one was not probed", kind)
 }
 
 // StaleCases names the cases that are for no GET operation of the service,

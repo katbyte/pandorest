@@ -512,6 +512,34 @@ func (g *gen) writeOptionsPreludeFailing(b *strings.Builder, o *definitions.Oper
 	}
 }
 
+// writeShapeChecks refuses a path parameter or an option that is an id of a kind with a shape and has not got it, before any request.
+func (g *gen) writeShapeChecks(b *strings.Builder, o *definitions.Operation) {
+	wrote := false
+	for i := range o.PathParameters {
+		p := &o.PathParameters[i]
+		if p.Type.Type == definitions.ID && g.idShape(p.Type.ReferenceName) != "" {
+			fmt.Fprintf(b, "\tif err = %s.Check(); err != nil {\n\t\treturn\n\t}\n", p.Argument)
+			wrote = true
+		}
+	}
+	ov := g.optionsVar(o)
+	for i := range o.Options {
+		opt := &o.Options[i]
+		field := ov + "." + opt.Field
+		switch {
+		case opt.Type.Type == definitions.ID && g.idShape(opt.Type.ReferenceName) != "":
+			fmt.Fprintf(b, "\tif %s {\n\t\tif err = %s.Check(); err != nil {\n\t\t\treturn\n\t\t}\n\t}\n", g.idCondition(opt.Type.ReferenceName, field), field)
+			wrote = true
+		case opt.Type.Type == definitions.List && opt.Type.NestedItem != nil && opt.Type.NestedItem.Type == definitions.ID && g.idShape(opt.Type.NestedItem.ReferenceName) != "":
+			fmt.Fprintf(b, "\tfor _, id := range %s {\n\t\tif err = id.Check(); err != nil {\n\t\t\treturn\n\t\t}\n\t}\n", field)
+			wrote = true
+		}
+	}
+	if wrote {
+		b.WriteString("\n")
+	}
+}
+
 // held is the expression the options struct holds an argument's value by: its
 // address for a boolean or a number, the value for the rest (see optionType).
 func held(opt *definitions.Option, expr string) string {
@@ -557,6 +585,7 @@ func (g *gen) writeMethod(b *strings.Builder, o *definitions.Operation, response
 	fmt.Fprintf(b, "func (c Client) %s(%s) (result %s, err error) {\n",
 		o.Name, strings.Join(append([]string{"ctx context.Context"}, params...), ", "), responseType)
 	g.writeOptionsPrelude(b, o, o.Name, optionsType)
+	g.writeShapeChecks(b, o)
 	if embedded := g.embedded(o); embedded != "" {
 		// a zero record until one is decoded, so a promoted field reads empty rather than panicking
 		fmt.Fprintf(b, "\tresult.%s = &%s{}\n", embeddedField(embedded), embedded)

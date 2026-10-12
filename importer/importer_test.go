@@ -1278,6 +1278,11 @@ func TestIDs(t *testing.T) {
 		"a string kind on a number":        {ids: []config.ID{{Name: "SeriesID", Base: "string", Names: []string{"seriesId"}}}, want: "GET /episode seriesId is a Integer, which cannot be a SeriesID (String)"},
 		"a joined string not named Joined": {ids: []config.ID{{Name: "SeriesID", Of: []string{"SeriesResource"}, Names: []string{"ids"}}}, want: "GET /series ids is a String, which cannot be a SeriesID (Integer); a string that carries several joined by commas is named in Joined"},
 		"a base that is not a type":        {ids: []config.ID{{Name: "SeriesID", Base: "float", Names: []string{"seriesId"}}}, want: `SeriesID: Base "float" is not int, int64 or string`},
+		"a shape with an example":          {ids: []config.ID{{Name: "SeriesID", Of: []string{"SeriesResource"}, Shape: "^[1-9][0-9]*$", Example: "12"}}, want: ""},
+		"a shape that is no expression":    {ids: []config.ID{{Name: "SeriesID", Of: []string{"SeriesResource"}, Shape: "^[", Example: "1"}}, want: `SeriesID: Shape "^[" is not a regular expression`},
+		"a shape with no example":          {ids: []config.ID{{Name: "SeriesID", Of: []string{"SeriesResource"}, Shape: "^[1-9][0-9]*$"}}, want: "SeriesID: a Shape needs an Example"},
+		"an example not of the shape":      {ids: []config.ID{{Name: "SeriesID", Of: []string{"SeriesResource"}, Shape: "^[1-9][0-9]*$", Example: "0"}}, want: `SeriesID: the Example "0" is not of the Shape "^[1-9][0-9]*$"`},
+		"an example that is no number":     {ids: []config.ID{{Name: "SeriesID", Of: []string{"SeriesResource"}, Shape: "^[a-z]+$", Example: "abc"}}, want: `SeriesID: the Example "abc" is not a number, which the kind is`},
 	} {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()

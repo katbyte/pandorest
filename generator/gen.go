@@ -365,6 +365,7 @@ func (g *gen) fileHeader(body string) string {
 		{"net/http/httptest", "httptest."},
 		{"net/url", "url."},
 		{"reflect", "reflect."},
+		{"regexp", "regexp."},
 		{"slices", "slices."},
 		{"strconv", "strconv."},
 		{"strings", "strings."},
@@ -732,9 +733,39 @@ func (g *gen) idsFile() string {
 		}
 		fmt.Fprintf(&b, "// %s is a kind of id the service tells apart, which the compiler keeps from every other kind;\n// %s(id) and %s(n) convert one value, %s a list.\n", k.Name, base, k.Name, list)
 		fmt.Fprintf(&b, "type %s %s\n", k.Name, base)
+		if k.Shape != "" {
+			shape := shapeVar(k.Name)
+			g.declare(shape, "ids.go")
+			fmt.Fprintf(&b, "\n// %s is the shape every %s has.\nvar %s = regexp.MustCompile(%s)\n", shape, k.Name, shape, strconv.Quote(k.Shape))
+			fmt.Fprintf(&b, "\n// Check refuses a value that has not the shape every %s has, which a method does before sending a request with it; the error names the value.\n", k.Name)
+			fmt.Fprintf(&b, "func (id %s) Check() error {\n\tif !%s.MatchString(fmt.Sprint(%s(id))) {\n\t\treturn fmt.Errorf(\"%%v is not %s %s (the shape is %%s)\", %s(id), %s)\n\t}\n\n\treturn nil\n}\n", k.Name, shape, base, article(k.Name), k.Name, base, strconv.Quote(k.Shape))
+		}
 	}
 
 	return g.fileHeader(b.String())
+}
+
+// article is "an" before a name that starts with a vowel, else "a".
+func article(name string) string {
+	if strings.ContainsRune("AEIOUaeiou", rune(name[0])) {
+		return "an"
+	}
+
+	return "a"
+}
+
+// shapeVar names the variable holding a kind's shape: seriesIDShape.
+func shapeVar(kind string) string {
+	return strings.ToLower(kind[:1]) + kind[1:] + "Shape"
+}
+
+// idShape is the shape of a kind of id, or "" for one with none.
+func (g *gen) idShape(kind string) string {
+	if k := g.svc.IDKind(kind); k != nil {
+		return k.Shape
+	}
+
+	return ""
 }
 
 // sentModels is every model a request body reaches, itself or through a

@@ -48,15 +48,23 @@ const (
 // the places of a Name that are something else there. Joined names the
 // parameters that take the kind as one comma-joined string (Emby's Ids),
 // held in Go as a list of the kind. A typed id on a path the document types
-// as text is formatted by the method, so the caller passes the kind.
+// as text is formatted by the method, so the caller passes the kind. Shape
+// is a regular expression every value of the kind matches, over its text
+// (Emby's "^[0-9a-f]{32}$"): a method refuses a path parameter or an option
+// that does not, before any request is sent, with an error naming the value,
+// where a server might answer a malformed id with a bare 500; Example is a
+// value of the shape, which the generated tests send, and is required with
+// it.
 type ID struct {
-	Name   string
-	Of     []string
-	Base   string
-	Names  []string
-	In     []string
-	Except []string
-	Joined []string
+	Name    string
+	Of      []string
+	Base    string
+	Names   []string
+	In      []string
+	Except  []string
+	Joined  []string
+	Shape   string
+	Example string
 }
 
 // Dates says how a server writes a date: Send is the layout a date goes out

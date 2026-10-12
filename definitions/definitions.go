@@ -261,6 +261,9 @@ const (
 type IDKind struct {
 	Name string     `json:"Name"`
 	Base ObjectType `json:"Base"`
+	// Shape is the regular expression every value of the kind matches, over its text, and Example a value of it; empty for a kind with no shape.
+	Shape   string `json:"Shape,omitempty"`
+	Example string `json:"Example,omitempty"`
 }
 
 // TypeRef is the type of a field, parameter or body.
@@ -332,6 +335,17 @@ func (s *Service) Constants() map[string]*Constant {
 	}
 
 	return out
+}
+
+// IDKind is a kind of id by name, or nil for one the service does not declare.
+func (s *Service) IDKind(kind string) *IDKind {
+	for i := range s.IDs {
+		if s.IDs[i].Name == kind {
+			return &s.IDs[i]
+		}
+	}
+
+	return nil
 }
 
 // IDBase is the base type of a kind of id, or "" for a kind the service does

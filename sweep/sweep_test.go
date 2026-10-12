@@ -285,7 +285,7 @@ func service() *definitions.Service {
 		{Name: "since", Field: "Since", In: definitions.InQuery, Type: definitions.TypeRef{Type: definitions.DateTime}},
 	}
 	one := op("GetItem", "/items/{id}", ref("Item"))
-	one.PathParameters = []definitions.PathParameter{{Name: "id", Argument: "id", Type: str()}}
+	one.PathParameters = []definitions.PathParameter{{Name: "id", Argument: "id", Type: definitions.TypeRef{Type: definitions.ID, ReferenceName: "ItemID"}}}
 	settings := op("GetItemSettings", "/config/items/{id}", ref("Item"))
 	settings.PathParameters = []definitions.PathParameter{{Name: "id", Argument: "id", Type: str()}}
 	thing := op("GetThing", "/things/{id}", ref("Item"))
@@ -639,10 +639,12 @@ func TestRun(t *testing.T) {
 		"GetPage": {Decode: true, Why: "it answers a page"},
 		"GetLost": {Skip: "its model is wrong, and a workaround is on its way"},
 	}
+	// an id nothing has is probed through the first GET that takes the kind; a kind no GET takes is said so
+	s.MissingIDs = map[string]string{"ItemID": "zz", "UserID": "u"}
 	s.Run(t)
 
-	// every GET but the skipped one was called, and the DELETE was not
-	if len(*queries) != 12 || slices.ContainsFunc(*queries, func(q string) bool { return strings.HasPrefix(q, "/lost") }) {
+	// every GET but the skipped one was called, and the DELETE was not; the probe is one call more
+	if len(*queries) != 13 || !slices.Contains(*queries, "/items/zz?") || slices.ContainsFunc(*queries, func(q string) bool { return strings.HasPrefix(q, "/lost") }) {
 		t.Errorf("the server saw %d requests: %q", len(*queries), *queries)
 	}
 }

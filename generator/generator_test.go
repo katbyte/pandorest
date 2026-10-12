@@ -989,24 +989,52 @@ func TestIDs(t *testing.T) {
 	}
 	cfg := config.Service{Name: "mini", Package: "mini", Naming: config.OperationIDNaming, Auth: "APIKey", IDs: []config.ID{
 		{Name: "SeriesID", Of: []string{"Series"}, Joined: []string{"ids"}},
-		{Name: "TagID", Base: "int", Names: []string{"tags", "tagIds"}},
-		{Name: "ItemID", Of: []string{"Item"}, Names: []string{"itemId"}},
+		{Name: "ItemID", Of: []string{"Item"}, Names: []string{"itemId"}, Shape: "^[0-9a-f]{4}$", Example: "0a1b"},
 		{Name: "UserID", Base: "string", Names: []string{"userId"}},
+		{Name: "TagID", Base: "int", Names: []string{"tags", "tagIds"}, Shape: "^[1-9][0-9]*$", Example: "7"},
 	}}
 	svc, err := importer.FromSpec(cfg, spec, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	dir := generateInModule(t, svc, generator.Options{})
+	// a kind with a shape refuses a value without it before any request, naming the value
+	if err := os.WriteFile(filepath.Join(dir, "shape_test.go"), []byte(`package mini
+
+import (
+	"strings"
+	"testing"
+)
+
+func TestShape(t *testing.T) {
+	t.Parallel()
+
+	c, s := newOperationServer(t, 200, "application/json", "{}")
+	if _, err := c.GetItem(t.Context(), ItemID("x32")); err == nil || err.Error() != "x32 is not an ItemID (the shape is ^[0-9a-f]{4}$)" {
+		t.Errorf("a malformed id = %v", err)
+	}
+	if _, err := c.GetSeries(t.Context(), GetSeriesOptions{TagIds: []TagID{3, 0}}); err == nil || !strings.Contains(err.Error(), "0 is not a TagID") {
+		t.Errorf("a malformed id among a list = %v", err)
+	}
+	if n := len(s.requests); n != 0 {
+		t.Errorf("%d requests were sent", n)
+	}
+	if _, err := c.GetItem(t.Context(), ItemID("0a1b")); err != nil {
+		t.Errorf("a well-formed id = %v", err)
+	}
+}
+`), 0o600); err != nil {
+		t.Fatal(err)
+	}
 	goTool(t, dir, "vet")
 	goTool(t, dir, "test")
 
 	for file, wants := range map[string][]string{
-		"ids.go":                         {"type SeriesID int\n", "type TagID int\n", "type ItemID string\n", "type UserID string\n"},
+		"ids.go":                         {"type SeriesID int\n", "type TagID int\n", "type ItemID string\n", "type UserID string\n", "var itemIDShape = regexp.MustCompile(\"^[0-9a-f]{4}$\")", "func (id ItemID) Check() error {", "func (id TagID) Check() error {"},
 		"series_model_series.go":         {"Id    SeriesID `json:\"id,omitempty\"`", "Tags  []TagID  `json:\"tags,omitzero\"`"},
 		"series_method_putseriesbyid.go": {"func (c Client) PutSeriesById(ctx context.Context, id SeriesID, input Series) (", `url.PathEscape(strconv.Itoa(int(id)))`},
 		"series_method_getseries.go":     {"Ids    []SeriesID", "TagIds []TagID", `out.Append("ids", client.Joined(o.Ids))`, `out.Append("tagIds", strconv.Itoa(int(v)))`},
-		"items_method_getitem.go":        {"func (c Client) GetItem(ctx context.Context, itemId ItemID, options ...GetItemOptions) (", `url.PathEscape(string(itemId))`, `if o.UserId != "" {`, `out.Append("userId", string(o.UserId))`},
+		"items_method_getitem.go":        {"func (c Client) GetItem(ctx context.Context, itemId ItemID, options ...GetItemOptions) (", "if err = itemId.Check(); err != nil {", `url.PathEscape(string(itemId))`, `if o.UserId != "" {`, `out.Append("userId", string(o.UserId))`},
 		"items_model_item.go":            {"Id     ItemID `json:\"id,omitempty\"`", "UserId UserID `json:\"userId,omitempty\"`"},
 	} {
 		src := read(t, dir, file)

@@ -141,12 +141,28 @@ func (im *importer) applyIDs(groups map[string]*definitions.Group) []definitions
 			}
 		}
 		im.log(fmt.Sprintf("%s: ids: %s in %s (%d from Of, %d by name, %d by In)", im.cfg.Name, k.cfg.Name, placesWord(total), k.fromOf, k.byName, k.byIn))
-		out = append(out, definitions.IDKind{Name: k.cfg.Name, Base: k.base})
+		if k.cfg.Shape != "" {
+			re, err := regexp.Compile(k.cfg.Shape)
+			switch {
+			case err != nil:
+				im.fail(fmt.Sprintf("%s: Shape %q is not a regular expression: %v", k.cfg.Name, k.cfg.Shape, err))
+			case k.cfg.Example == "":
+				im.fail(k.cfg.Name + ": a Shape needs an Example, a value of it for the generated tests")
+			case !re.MatchString(k.cfg.Example):
+				im.fail(fmt.Sprintf("%s: the Example %q is not of the Shape %q", k.cfg.Name, k.cfg.Example, k.cfg.Shape))
+			case k.base != definitions.String && !digitsRe.MatchString(k.cfg.Example):
+				im.fail(fmt.Sprintf("%s: the Example %q is not a number, which the kind is", k.cfg.Name, k.cfg.Example))
+			}
+		}
+		out = append(out, definitions.IDKind{Name: k.cfg.Name, Base: k.base, Shape: k.cfg.Shape, Example: k.cfg.Example})
 	}
 	im.logUncovered(places, typed)
 
 	return out
 }
+
+// digitsRe is what the Example of a number kind must be.
+var digitsRe = regexp.MustCompile(`^-?\d+$`)
 
 // idBase is the base type of a kind: its Base, or the type of the Id of the
 // first model it is of.

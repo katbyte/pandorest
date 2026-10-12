@@ -741,8 +741,19 @@ const sampleTimeExpr = "time.Date(2024, time.March, 4, 5, 6, 7, 0, time.UTC)"
 
 // sampleID is a sample of a kind of id as Go source and as it is sent.
 func (g *gen) sampleID(kind, name string) (expr, wire string) {
+	example := ""
+	if k := g.svc.IDKind(kind); k != nil {
+		example = k.Example
+	}
 	if g.idBase(kind) == definitions.String {
+		if example != "" {
+			return g.typeName(kind) + "(" + strconv.Quote(example) + ")", example
+		}
+
 		return g.typeName(kind) + `("v-` + name + `")`, "v-" + name
+	}
+	if example != "" {
+		return g.typeName(kind) + "(" + example + ")", example
 	}
 
 	return g.typeName(kind) + "(7)", "7"
