@@ -53,8 +53,9 @@ func FromSpec(cfg config.Service, spec *openapi.Spec, applied []string, log func
 
 	im.checkWords()
 	im.importSchemas()
-	im.keepNull()
 	groups := im.importOperations()
+	// after the operations, since an answer declared inline is a model only once its operation is read (dockhand's document has no components at all)
+	im.keepNull()
 	for _, g := range groups {
 		for i := range g.Operations {
 			im.markPageable(&g.Operations[i])

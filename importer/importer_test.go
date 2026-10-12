@@ -728,6 +728,21 @@ func TestKeepNull(t *testing.T) {
 		t.Errorf("%d fields keep null, want Item.Season, Item.Id and ItemBlur.Ok alone", kept)
 	}
 
+	// an answer declared inline, in a document with no components, is a model only once its operation is read
+	spec, err := openapi.Parse([]byte(`{"openapi": "3.0.1", "info": {"title": "Dock", "version": "1"}, "paths": {
+    "/registries/test": {"post": {"operationId": "PostRegistriesTest", "tags": ["Registries"],
+      "responses": {"200": {"content": {"application/json": {"schema": {"type": "object", "properties": {"authenticated": {"type": "boolean"}, "message": {"type": "string"}}}}}}}}}}}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	svc, err = FromSpec(config.Service{Name: "dock", Package: "dock", Naming: config.OperationIDNaming, Auth: "APIKey", KeepNull: []string{"PostRegistriesTestAnswer.authenticated"}}, spec, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if f := fieldNamed(svc.Models()["PostRegistriesTestAnswer"].Fields, "authenticated"); f == nil || !f.KeepsNull {
+		t.Errorf("PostRegistriesTestAnswer.authenticated = %+v, want kept", f)
+	}
+
 	for keep, want := range map[string]string{
 		"Item.Ghost":  "KeepNull names Item.Ghost, a field the document does not have",
 		"Ghost.Id":    "KeepNull names Ghost.Id, a field the document does not have",
