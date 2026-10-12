@@ -305,3 +305,45 @@ func TestUndeclaredEnumsWithoutSchemas(t *testing.T) {
 		t.Errorf("by path: the top status %+v, the nested %+v", rows["status"], rows["containerDetails"].Items.Properties["status"])
 	}
 }
+
+// A path parameter typed as text on one operation and as a number on another of the same path becomes the number; one only ever text stays.
+func TestNumberedPathIDs(t *testing.T) {
+	t.Parallel()
+
+	spec, err := openapi.Parse([]byte(`{"openapi": "3.0.1", "info": {"title": "Bare", "version": "1"}, "paths": {
+    "/tag/{id}": {
+      "get": {"operationId": "GetTag", "parameters": [{"name": "id", "in": "path", "required": true, "schema": {"type": "integer", "format": "int32"}}], "responses": {"200": {"description": "ok"}}},
+      "put": {"operationId": "PutTag", "parameters": [{"name": "id", "in": "path", "required": true, "schema": {"type": "string"}}], "responses": {"200": {"description": "ok"}}}},
+    "/log/{name}": {
+      "get": {"operationId": "GetLog", "parameters": [{"name": "name", "in": "path", "required": true, "schema": {"type": "string"}}], "responses": {"200": {"description": "ok"}}},
+      "delete": {"operationId": "DeleteLog", "parameters": [{"name": "name", "in": "path", "required": true, "schema": {"type": "string"}}], "responses": {"204": {"description": "gone"}}}}}}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var notes []string
+	w := workarounds.NumberedPathIDs(workarounds.About{Name: "bare-put-ids", Service: "bare", Bug: "a PUT's id is text"})
+	noting, ok := w.(interface {
+		ApplyNoting(*openapi.Spec, func(string)) error
+	})
+	if !ok {
+		t.Fatal("the workaround does not note what it reached")
+	}
+	if err := noting.ApplyNoting(spec, func(n string) { notes = append(notes, n) }); err != nil {
+		t.Fatal(err)
+	}
+	put := spec.Paths["/tag/{id}"].Put.Parameters[0].Schema
+	if put.Type != "integer" || put.Format != "int32" {
+		t.Errorf("the PUT's id = %+v, want the GET's integer int32", put)
+	}
+	if name := spec.Paths["/log/{name}"].Delete.Parameters[0].Schema; name.Type != "string" {
+		t.Errorf("a name only ever text = %+v", name)
+	}
+	if len(notes) != 1 || notes[0] != "the text id of 1 place is the number another operation of the path declares" {
+		t.Errorf("notes = %q", notes)
+	}
+
+	// applied again, or to a document with no such parameter, it reaches nothing
+	if err := w.Apply(spec); err == nil || err.Error() != "no text path parameter has a number of the same name beside it" {
+		t.Errorf("a second application: %v", err)
+	}
+}

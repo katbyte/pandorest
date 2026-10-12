@@ -690,3 +690,49 @@ func JoinedLists(about About, lists map[string]Joined) Workaround {
 		return nil
 	}}
 }
+
+// NumberedPathIDs is for a path parameter a document types as text on one
+// operation and as a number on another of the same path (Sonarr's PUT
+// /tag/{id} takes a string where its GET and DELETE take an integer), which
+// leaves a caller formatting a number it holds. The text one becomes the
+// number the other declares, format kept. A parameter only ever typed as
+// text, a log file's name, is left alone. It fails when it reaches nothing,
+// which is how a document that was fixed is noticed.
+func NumberedPathIDs(about About) Workaround {
+	return readyMade{about, func(spec *openapi.Spec, note func(string)) error {
+		marked := 0
+		for _, path := range openapi.SortedKeys(spec.Paths) {
+			methods := spec.Paths[path].Methods()
+			for _, m := range methods {
+				for _, prm := range m.Operation.Parameters {
+					if prm.In != openapi.InPath || prm.Schema == nil || prm.Schema.Type != openapi.TypeString {
+						continue
+					}
+					if number := numberedAs(methods, prm.Name); number != nil {
+						prm.Schema.Type, prm.Schema.Format = number.Type, number.Format
+						marked++
+					}
+				}
+			}
+		}
+		if marked == 0 {
+			return errors.New("no text path parameter has a number of the same name beside it")
+		}
+		note(fmt.Sprintf("the text id of %s is the number another operation of the path declares", placesWord(marked)))
+
+		return nil
+	}}
+}
+
+// numberedAs is the integer schema an operation of the path gives a path parameter of the name, or nil.
+func numberedAs(methods []openapi.Method, name string) *openapi.Schema {
+	for _, m := range methods {
+		for _, prm := range m.Operation.Parameters {
+			if prm.In == openapi.InPath && prm.Name == name && prm.Schema != nil && prm.Schema.Type == openapi.TypeInteger {
+				return prm.Schema
+			}
+		}
+	}
+
+	return nil
+}
