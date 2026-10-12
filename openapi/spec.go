@@ -52,6 +52,21 @@ type Operation struct {
 	// the one its path or its operationId would make: how two operations
 	// that make the same name are told apart. No document carries it.
 	Name string `json:"-"`
+	// Commands is set by a workaround on an operation that queues a command named in its body, and says which commands there
+	// are and how a queued one is followed. No document carries it.
+	Commands *CommandSet `json:"-"`
+}
+
+// CommandSet is how a server that queues commands by name through one operation is followed: Get is the operation that answers a
+// queued command by its id ("GET /api/v3/command/{id}"), Status the field of its answer that says how far it is, Finished the
+// values that mean it is over and Failed those among them that mean it failed, and Commands the schema each command's body is, by
+// the command's name as the server takes it.
+type CommandSet struct {
+	Get      string
+	Status   string
+	Finished []string
+	Failed   []string
+	Commands map[string]string
 }
 
 // Parameter is a path, query or header parameter.

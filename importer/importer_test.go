@@ -1303,3 +1303,65 @@ func TestIDs(t *testing.T) {
 		})
 	}
 }
+
+// A command set makes an operation per command beside the one that queues them, each sending its own schema and fixed to its name,
+// told apart by its key; the set's Get resolves to that operation's Go name.
+func TestCommands(t *testing.T) {
+	t.Parallel()
+
+	spec, err := openapi.Parse([]byte(`{"openapi": "3.0.1", "info": {"title": "Arr", "version": "1"}, "paths": {
+    "/api/v3/command": {"post": {"tags": ["Command"], "requestBody": {"content": {"application/json": {"schema": {"$ref": "#/components/schemas/CommandResource"}}}},
+      "responses": {"201": {"content": {"application/json": {"schema": {"$ref": "#/components/schemas/CommandResource"}}}}}}},
+    "/api/v3/command/{id}": {"get": {"tags": ["Command"], "parameters": [{"name": "id", "in": "path", "required": true, "schema": {"type": "integer"}}],
+      "responses": {"200": {"content": {"application/json": {"schema": {"$ref": "#/components/schemas/CommandResource"}}}}}}}},
+  "components": {"schemas": {"CommandResource": {"type": "object", "properties": {"id": {"type": "integer"}, "name": {"type": "string"}, "status": {"type": "string"}, "message": {"type": "string"}}}}}}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	w := workarounds.Commands(workarounds.About{Name: "arr-commands", Service: "arr", Bug: "the command body is an open record"}, workarounds.CommandSet{
+		Post: "POST /api/v3/command", Get: "GET /api/v3/command/{id}", Status: "status", Finished: []string{"completed", "failed"}, Failed: []string{"failed"},
+		Commands: map[string]map[string]*openapi.Schema{"RefreshSeries": {"seriesId": {Type: "integer"}}, "RssSync": {}},
+	})
+	if err := w.Apply(spec); err != nil {
+		t.Fatal(err)
+	}
+	cfg := config.Service{Name: "arr", Package: "arr", Naming: config.PathNaming, PathPrefix: "/api/v3", Auth: "APIKey"}
+	svc, err := FromSpec(cfg, spec, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	keys := make([]string, 0, len(svc.Operations()))
+	for _, o := range svc.Operations() {
+		keys = append(keys, o.Key())
+	}
+	slices.Sort(keys)
+	if want := []string{"GET /api/v3/command/{id}", "POST /api/v3/command", "POST /api/v3/command RefreshSeries", "POST /api/v3/command RssSync"}; !slices.Equal(keys, want) {
+		t.Errorf("keys = %q", keys)
+	}
+	post := find(svc.Operations(), func(o *definitions.Operation) bool { return o.Name == "PostCommand" })
+	if post == nil || (*post).Commands == nil || (*post).Commands.Get != "GetCommandById" || (*post).Commands.Status != "status" {
+		t.Fatalf("the queueing operation = %+v", post)
+	}
+	refresh := find(svc.Operations(), func(o *definitions.Operation) bool { return o.Name == "RefreshSeries" })
+	if refresh == nil || (*refresh).Command != "RefreshSeries" || (*refresh).Request.Type.ReferenceName != "RefreshSeriesCommand" || (*refresh).Response.Type.ReferenceName != "CommandResource" {
+		t.Errorf("the command's operation = %+v", refresh)
+	}
+	m := svc.Models()["RefreshSeriesCommand"]
+	if m == nil || len(m.Fields) != 2 || m.Fields[0].JSONName != "name" && m.Fields[1].JSONName != "name" {
+		t.Errorf("the command's model = %+v", m)
+	}
+
+	// the refusals
+	for name, set := range map[string]workarounds.CommandSet{
+		"again":               {Post: "POST /api/v3/command", Get: "GET /api/v3/command/{id}", Status: "status", Finished: []string{"completed"}, Commands: map[string]map[string]*openapi.Schema{"Other": {}}},
+		"no such post":        {Post: "POST /api/v3/nothing", Get: "GET /api/v3/command/{id}", Status: "status", Finished: []string{"completed"}, Commands: map[string]map[string]*openapi.Schema{"Other": {}}},
+		"no finished":         {Post: "POST /api/v3/command", Get: "GET /api/v3/command/{id}", Status: "status", Commands: map[string]map[string]*openapi.Schema{"Other": {}}},
+		"no commands":         {Post: "POST /api/v3/command", Get: "GET /api/v3/command/{id}", Status: "status", Finished: []string{"completed"}},
+		"a field called name": {Post: "POST /api/v3/command", Get: "GET /api/v3/command/{id}", Status: "status", Finished: []string{"completed"}, Commands: map[string]map[string]*openapi.Schema{"Other": {"name": {Type: "string"}}}},
+		"not a Go name":       {Post: "POST /api/v3/command", Get: "GET /api/v3/command/{id}", Status: "status", Finished: []string{"completed"}, Commands: map[string]map[string]*openapi.Schema{"refresh-series": {}}},
+	} {
+		if err := workarounds.Commands(workarounds.About{Name: "x", Service: "arr"}, set).Apply(spec); err == nil {
+			t.Errorf("%s: no error", name)
+		}
+	}
+}

@@ -53,15 +53,72 @@ func (im *importer) importOperations() map[string]*definitions.Group {
 				im.fail(fmt.Sprintf("%s: makes the method %s, which %s makes too: give one of them a name of its own with a workaround (the operation's Name), or take one out", where, o.Name, prev))
 			}
 			names[o.Name] = where
+			// a command the operation queues is an operation of its own, with the same request fixed to the command's name
+			commands := im.commandOperations(where, &o, op)
 			g.Operations = append(g.Operations, o)
+			for _, c := range commands {
+				if prev, ok := names[c.Name]; ok {
+					im.fail(fmt.Sprintf("%s: the command %s makes the method %s, which %s makes too", where, c.Command, c.Name, prev))
+				}
+				names[c.Name] = where + " " + c.Command
+				g.Operations = append(g.Operations, c)
+			}
 		}
 	}
 
 	for _, g := range groups {
 		slices.SortFunc(g.Operations, func(a, b definitions.Operation) int { return strings.Compare(a.Name, b.Name) })
 	}
+	im.resolveCommandGets(groups)
 
 	return groups
+}
+
+// commandOperations are the operations a command set makes beside the one that queues: one per command, sending the command's own
+// schema as the body and answering as the queueing operation does. The set's Get is held as its key until every operation is named.
+func (im *importer) commandOperations(where string, o *definitions.Operation, op *openapi.Operation) []definitions.Operation {
+	if op.Commands == nil {
+		return nil
+	}
+	set := op.Commands
+	o.Commands = &definitions.CommandSet{Get: set.Get, Status: set.Status, Finished: set.Finished, Failed: set.Failed}
+	var out []definitions.Operation
+	for _, name := range openapi.SortedKeys(set.Commands) {
+		c := definitions.Operation{Name: name, Method: o.Method, Path: o.Path, Description: "Queues the " + name + " command.", Response: o.Response, ExpectedStatusCodes: o.ExpectedStatusCodes, Command: name}
+		c.Request = &definitions.Body{ContentType: "application/json", Type: reference(typeName(set.Commands[name]))}
+		im.claimName(c.Name, where+" command "+name)
+		out = append(out, c)
+	}
+
+	return out
+}
+
+// resolveCommandGets turns each command set's Get from the key of the operation that answers a queued command into that
+// operation's Go name, failing for one that is not there or takes no id in its path.
+func (im *importer) resolveCommandGets(groups map[string]*definitions.Group) {
+	byKey := map[string]*definitions.Operation{}
+	for _, g := range groups {
+		for i := range g.Operations {
+			byKey[g.Operations[i].Key()] = &g.Operations[i]
+		}
+	}
+	for _, g := range groups {
+		for i := range g.Operations {
+			set := g.Operations[i].Commands
+			if set == nil {
+				continue
+			}
+			get := byKey[set.Get]
+			switch {
+			case get == nil:
+				im.fail(fmt.Sprintf("%s: the commands' Get %s is not an operation of the document", g.Operations[i].Key(), set.Get))
+			case len(get.PathParameters) != 1:
+				im.fail(fmt.Sprintf("%s: the commands' Get %s takes %d path parameters, not the command's id alone", g.Operations[i].Key(), set.Get, len(get.PathParameters)))
+			default:
+				set.Get = get.Name
+			}
+		}
+	}
 }
 
 // groupName returns the operation's tag and the group it names.

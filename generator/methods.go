@@ -32,6 +32,7 @@ func (g *gen) methodFile(o *definitions.Operation) string {
 		g.writeCompleteMethod(&b, o, optionsType)
 		g.writeEachMethod(&b, o, optionsType)
 	}
+	g.writeCommandMethods(&b, o)
 
 	return g.fileHeader(b.String())
 }
@@ -67,6 +68,7 @@ func (g *gen) groupMethodFile(o *definitions.Operation) string {
 		g.writeCompleteMethod(&b, o, g.typeName(o.Name+"Options"))
 		g.writeEachMethod(&b, o, g.typeName(o.Name+"Options"))
 	}
+	g.writeCommandMethods(&b, o)
 
 	return g.fileHeader(b.String())
 }
@@ -512,6 +514,112 @@ func (g *gen) writeOptionsPreludeFailing(b *strings.Builder, o *definitions.Oper
 	}
 }
 
+// writeCommandMethods writes what a command set adds: on the operation that queues, WaitForCommand; on each command's own
+// operation, the AndWait form that queues it and waits.
+func (g *gen) writeCommandMethods(b *strings.Builder, o *definitions.Operation) {
+	switch {
+	case o.Commands != nil:
+		g.writeWaitForCommand(b, o)
+	case o.Command != "":
+		g.writeAndWait(b, o)
+	}
+}
+
+// writeWaitForCommand writes the poll of a queued command until the server says it finished.
+func (g *gen) writeWaitForCommand(b *strings.Builder, o *definitions.Operation) {
+	set := o.Commands
+	get := g.operationNamed(set.Get)
+	if get == nil || get.Response == nil || len(get.PathParameters) != 1 {
+		return
+	}
+	g.declare("Client.WaitForCommand", "operation "+o.Name)
+	answer := get.Response.Type.ReferenceName
+	message := g.fieldFor(answer, "message")
+	b.WriteString("\n// CommandPoll is how often WaitForCommand asks after a command.\nvar CommandPoll = 2 * time.Second\n\n")
+	fmt.Fprintf(b, "// WaitForCommand asks after the command every CommandPoll until the server says it finished (%s), or ctx ends, or wait\n", strings.Join(set.Finished, ", "))
+	b.WriteString("// runs out, and answers it as it stands: a command that failed is an error carrying what the server said, and one still running\n// when wait ran out is an error too. For a command queued by its own method, <Name>AndWait does both at once.\n")
+	fmt.Fprintf(b, "func (c Client) WaitForCommand(ctx context.Context, id %s, wait time.Duration) (result %s, err error) {\n", g.goType(get.PathParameters[0].Type), g.typeName(get.Name+"Response"))
+	b.WriteString("\tdeadline := time.Now().Add(wait)\n\tfor {\n")
+	fmt.Fprintf(b, "\t\tresult, err = c.%s(ctx, id)\n\t\tif err != nil || result.Answer == nil {\n\t\t\treturn\n\t\t}\n", get.Name)
+	fmt.Fprintf(b, "\t\tstatus := string(result.Answer.%s)\n", g.fieldFor(answer, set.Status))
+	if len(set.Failed) > 0 {
+		said := `""`
+		if message != "" {
+			said = "string(result.Answer." + message + ")"
+		}
+		fmt.Fprintf(b, "\t\tif slices.Contains(%s, status) {\n\t\t\terr = fmt.Errorf(\"the command %%v %%s: %%s\", id, status, %s)\n\t\t\treturn\n\t\t}\n", goStrings(set.Failed), said)
+	}
+	fmt.Fprintf(b, "\t\tif slices.Contains(%s, status) {\n\t\t\treturn\n\t\t}\n", goStrings(set.Finished))
+	b.WriteString("\t\tif time.Now().After(deadline) {\n\t\t\terr = fmt.Errorf(\"the command %v is still %s after %s\", id, status, wait)\n\t\t\treturn\n\t\t}\n")
+	b.WriteString("\t\tselect {\n\t\tcase <-ctx.Done():\n\t\t\terr = ctx.Err()\n\t\t\treturn\n\t\tcase <-time.After(CommandPoll):\n\t\t}\n\t}\n}\n")
+}
+
+// writeAndWait writes a command's AndWait: queued by its own method, then waited for.
+func (g *gen) writeAndWait(b *strings.Builder, o *definitions.Operation) {
+	queue := g.queueing(o)
+	if queue == nil {
+		return
+	}
+	get := g.operationNamed(queue.Commands.Get)
+	if get == nil || len(get.PathParameters) != 1 || o.Response == nil {
+		return
+	}
+	method := o.Name + "AndWait"
+	g.declare("Client."+method, "operation "+o.Name)
+	fmt.Fprintf(b, "\n// %s queues the %s command and waits for it as WaitForCommand does, answering it as it stands.\n", method, o.Command)
+	fmt.Fprintf(b, "func (c Client) %s(ctx context.Context, input %s, wait time.Duration) (result %s, err error) {\n", method, g.goType(o.Request.Type), g.typeName(get.Name+"Response"))
+	fmt.Fprintf(b, "\tqueued, err := c.%s(ctx, input)\n\tif err != nil {\n\t\treturn\n\t}\n", o.Name)
+	fmt.Fprintf(b, "\tif queued.Answer == nil {\n\t\terr = errors.New(\"%s answered no command to wait for\")\n\t\treturn\n\t}\n\n", o.Name)
+	fmt.Fprintf(b, "\treturn c.WaitForCommand(ctx, %s(queued.Answer.%s), wait)\n}\n", g.goType(get.PathParameters[0].Type), g.fieldFor(o.Response.Type.ReferenceName, "id"))
+}
+
+// queueing is the operation that queues a command's operation: the same method and path, holding the command set.
+func (g *gen) queueing(o *definitions.Operation) *definitions.Operation {
+	for _, q := range g.svc.Operations() {
+		if q.Commands != nil && q.Method == o.Method && q.Path == o.Path {
+			return q
+		}
+	}
+
+	return nil
+}
+
+// operationNamed is the operation with the Go name, or nil.
+func (g *gen) operationNamed(name string) *definitions.Operation {
+	for _, o := range g.svc.Operations() {
+		if o.Name == name {
+			return o
+		}
+	}
+
+	return nil
+}
+
+// fieldFor is the Go field a model holds a JSON name in, or "" for none.
+func (g *gen) fieldFor(model, jsonName string) string {
+	m := g.models[model]
+	if m == nil {
+		return ""
+	}
+	for i := range m.Fields {
+		if strings.EqualFold(m.Fields[i].JSONName, jsonName) {
+			return m.Fields[i].Name
+		}
+	}
+
+	return ""
+}
+
+// goStrings is a []string literal.
+func goStrings(values []string) string {
+	quoted := make([]string, 0, len(values))
+	for _, v := range values {
+		quoted = append(quoted, strconv.Quote(v))
+	}
+
+	return "[]string{" + strings.Join(quoted, ", ") + "}"
+}
+
 // writeShapeChecks refuses a path parameter or an option that is an id of a kind with a shape and has not got it, before any request.
 func (g *gen) writeShapeChecks(b *strings.Builder, o *definitions.Operation) {
 	wrote := false
@@ -586,6 +694,10 @@ func (g *gen) writeMethod(b *strings.Builder, o *definitions.Operation, response
 		o.Name, strings.Join(append([]string{"ctx context.Context"}, params...), ", "), responseType)
 	g.writeOptionsPrelude(b, o, o.Name, optionsType)
 	g.writeShapeChecks(b, o)
+	if o.Command != "" {
+		// the command's name is the method's to set, so a caller cannot send another command through it
+		fmt.Fprintf(b, "\tinput.%s = %q\n\n", g.fieldFor(o.Request.Type.ReferenceName, "name"), o.Command)
+	}
 	if embedded := g.embedded(o); embedded != "" {
 		// a zero record until one is decoded, so a promoted field reads empty rather than panicking
 		fmt.Fprintf(b, "\tresult.%s = &%s{}\n", embeddedField(embedded), embedded)

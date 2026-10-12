@@ -88,8 +88,10 @@ func (g *gen) redirects() bool {
 }
 
 const operationServerHelpers = `// operationServer is a canned server that answers every request with one
-// status, content type and body, and records what it was sent.
+// status, content type and body, and records what it was sent. queued, when
+// set, is the status a POST gets instead, for a command queued and then polled.
 type operationServer struct {
+	queued int
 	*httptest.Server
 	requests []*http.Request
 	bodies   []string
@@ -110,6 +112,13 @@ func newOperationServer(t *testing.T, status int, contentType, body string) (*Cl
 		if body == "file bytes" {
 			// a file is named, as a server names one it serves
 			w.Header().Set("Content-Disposition", "attachment; filename=\"answer.bin\"")
+		}
+		if s.queued != 0 && r.Method == http.MethodPost {
+			// a command queued, answered as the queueing operation does; the polls after it get the status
+			w.WriteHeader(s.queued)
+			_, _ = io.WriteString(w, body)
+
+			return
 		}
 		w.WriteHeader(status)
 		_, _ = io.WriteString(w, body)
@@ -323,6 +332,9 @@ func (g *gen) testFile(o *definitions.Operation) string {
 
 	if o.Pageable != nil {
 		b.WriteString(g.completeTest(o, call))
+	}
+	if o.Command != "" {
+		b.WriteString(g.andWaitTest(o))
 	}
 
 	return g.fileHeader(b.String())
@@ -781,6 +793,10 @@ func (g *gen) emptyBodyJSON(o *definitions.Operation) (string, bool) {
 	if m == nil || m.WrittenWhole || len(m.Union) > 0 {
 		return "", false
 	}
+	if o.Command != "" {
+		// a command's name is set by the method whatever the caller set
+		return fmt.Sprintf(`{"name":%q}`, o.Command), true
+	}
 	var parts []string
 	for i := range m.Fields {
 		f := &m.Fields[i]
@@ -827,4 +843,55 @@ func (g *gen) zeroJSON(m *definitions.Model, f *definitions.Field) (string, bool
 	default:
 		return "", false
 	}
+}
+
+// andWaitTest proves a command's AndWait queues it and waits: a server that answers the queueing and then says the command
+// finished, one that says it failed, and the poll that gives up.
+func (g *gen) andWaitTest(o *definitions.Operation) string {
+	queue := g.queueing(o)
+	if queue == nil {
+		return ""
+	}
+	set := queue.Commands
+	get := g.operationNamed(set.Get)
+	if get == nil || get.Response == nil {
+		return ""
+	}
+	answer := get.Response.Type.ReferenceName
+	idJSON, statusJSON := g.jsonFor(answer, "id"), g.jsonFor(answer, set.Status)
+	body := func(status string) string { return fmt.Sprintf(`{%q: 7, %q: %q}`, idJSON, statusJSON, status) }
+	polled := get.ExpectedStatusCodes[0]
+	server := func(status string) string {
+		return fmt.Sprintf("\tc, s := newOperationServer(t, %d, \"application/json\", %q)\n\ts.queued = %d\n", polled, body(status), o.ExpectedStatusCodes[0])
+	}
+	var b strings.Builder
+	fmt.Fprintf(&b, "\nfunc TestOperation%sAndWait(t *testing.T) {\n\tt.Parallel()\n\n", o.Name)
+	b.WriteString(server(set.Finished[0]))
+	fmt.Fprintf(&b, "\tresult, err := c.%sAndWait(t.Context(), %s{}, time.Second)\n", o.Name, g.goType(o.Request.Type))
+	b.WriteString("\tif err != nil || !result.Answered() || len(s.requests) != 2 {\n\t\tt.Fatalf(\"AndWait = %v, %v after %d requests, want the command finished after queueing it and asking once\", result.Answer, err, len(s.requests))\n\t}\n")
+	fmt.Fprintf(&b, "\tif got := s.requests[0]; got.Method != http.MethodPost || !strings.Contains(s.bodies[0], %q) {\n\t\tt.Errorf(\"the command went as %%s %%s\", got.Method, s.bodies[0])\n\t}\n", `"name":"`+o.Command+`"`)
+	if len(set.Failed) > 0 {
+		b.WriteString("\n" + strings.Replace(server(set.Failed[0]), "c, s :=", "c, s =", 1))
+		fmt.Fprintf(&b, "\tif _, err := c.%sAndWait(t.Context(), %s{}, time.Second); err == nil || !strings.Contains(err.Error(), %q) {\n\t\tt.Errorf(\"a failed command = %%v\", err)\n\t}\n", o.Name, g.goType(o.Request.Type), set.Failed[0])
+	}
+	b.WriteString("\n\t// a command still running when the wait ends is an error saying so\n")
+	b.WriteString(strings.Replace(server("running"), "c, s :=", "c, s =", 1))
+	fmt.Fprintf(&b, "\tif _, err := c.%sAndWait(t.Context(), %s{}, 0); err == nil || !strings.Contains(err.Error(), \"still running\") {\n\t\tt.Errorf(\"a command the wait gave up on = %%v\", err)\n\t}\n}\n", o.Name, g.goType(o.Request.Type))
+
+	return b.String()
+}
+
+// jsonFor is the JSON name a model holds a field as, by its JSON name ignoring case, or the name given.
+func (g *gen) jsonFor(model, jsonName string) string {
+	m := g.models[model]
+	if m == nil {
+		return jsonName
+	}
+	for i := range m.Fields {
+		if strings.EqualFold(m.Fields[i].JSONName, jsonName) {
+			return m.Fields[i].JSONName
+		}
+	}
+
+	return jsonName
 }

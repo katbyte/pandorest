@@ -27,6 +27,12 @@ func Uncalled(svc *definitions.Service, root string, skip ...string) (uncalled [
 		if o.Pageable != nil {
 			names = append(names, o.Name+"Complete", o.Name+"Each")
 		}
+		if o.Command != "" {
+			names = append(names, o.Name+"AndWait")
+		}
+		if o.Commands != nil {
+			names = append(names, "WaitForCommand")
+		}
 		for _, name := range names {
 			total++
 			if !used[name] {

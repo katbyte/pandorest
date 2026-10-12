@@ -1146,3 +1146,59 @@ func TestGenerateServiceOptions(t *testing.T) {
 	goTool(t, dir, "vet")
 	goTool(t, dir, "test", "-count=1")
 }
+
+// A command set gives a method per command that fixes the command's name, an AndWait that queues and polls, and WaitForCommand for
+// one queued the plain way; the generated tests prove each on the wire.
+//
+//nolint:paralleltest // writes the testdata package the other tests would remove
+func TestCommands(t *testing.T) {
+	spec, err := openapi.Parse([]byte(`{"openapi": "3.0.1", "info": {"title": "Mini", "version": "1"}, "paths": {
+    "/api/v3/command": {"post": {"operationId": "PostCommand", "tags": ["Command"], "requestBody": {"content": {"application/json": {"schema": {"$ref": "#/components/schemas/CommandResource"}}}},
+      "responses": {"201": {"content": {"application/json": {"schema": {"$ref": "#/components/schemas/CommandResource"}}}}}}},
+    "/api/v3/command/{id}": {"get": {"operationId": "GetCommandById", "tags": ["Command"], "parameters": [{"name": "id", "in": "path", "required": true, "schema": {"type": "integer"}}],
+      "responses": {"200": {"content": {"application/json": {"schema": {"$ref": "#/components/schemas/CommandResource"}}}}}}}},
+  "components": {"schemas": {"CommandResource": {"type": "object", "properties": {"id": {"type": "integer"}, "name": {"type": "string"}, "status": {"$ref": "#/components/schemas/CommandStatus"}, "message": {"type": "string"}}},
+    "CommandStatus": {"type": "string", "enum": ["queued", "started", "completed", "failed", "aborted"]}}}}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	w := workarounds.Commands(workarounds.About{Name: "mini-commands", Service: "mini", Bug: "the command body is an open record"}, workarounds.CommandSet{
+		Post: "POST /api/v3/command", Get: "GET /api/v3/command/{id}", Status: "status", Finished: []string{"completed", "failed", "aborted"}, Failed: []string{"failed", "aborted"},
+		Commands: map[string]map[string]*openapi.Schema{"RefreshSeries": {"seriesId": {Type: "integer"}}, "RssSync": {}},
+	})
+	if err := w.Apply(spec); err != nil {
+		t.Fatal(err)
+	}
+	cfg := config.Service{Name: "mini", Package: "mini", Naming: config.OperationIDNaming, Auth: "APIKey"}
+	svc, err := importer.FromSpec(cfg, spec, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir := generateInModule(t, svc, generator.Options{})
+	goTool(t, dir, "vet")
+	goTool(t, dir, "test")
+
+	for file, wants := range map[string][]string{
+		"command_method_refreshseries.go": {"func (c Client) RefreshSeries(ctx context.Context, input RefreshSeriesCommand) (result RefreshSeriesResponse, err error) {", "\tinput.Name = \"RefreshSeries\"\n", "func (c Client) RefreshSeriesAndWait(ctx context.Context, input RefreshSeriesCommand, wait time.Duration) (result GetCommandByIdResponse, err error) {", "return c.WaitForCommand(ctx, int(queued.Answer.Id), wait)"},
+		"command_method_postcommand.go":   {"func (c Client) WaitForCommand(ctx context.Context, id int, wait time.Duration) (result GetCommandByIdResponse, err error) {", `if slices.Contains([]string{"failed", "aborted"}, status) {`, `if slices.Contains([]string{"completed", "failed", "aborted"}, status) {`, "string(result.Answer.Message)"},
+		"command_model_rsssynccommand.go": {"type RssSyncCommand struct {", "Name string `json:\"name,omitempty\"`"},
+	} {
+		src := read(t, dir, file)
+		for _, want := range wants {
+			if !strings.Contains(src, want) {
+				t.Errorf("%s lacks %q:\n%s", file, want, src)
+			}
+		}
+	}
+	if _, err := generator.Check(svc, dir); err != nil {
+		t.Errorf("Check = %v", err)
+	}
+
+	// the grouped layout has the same methods on the tag's client
+	dir = generateInModule(t, svc, generator.Options{Grouped: true, ImportPath: "github.com/katbyte/pandorest/generator/testdata/mini"})
+	goTool(t, dir, "vet")
+	goTool(t, dir, "test")
+	if src := read(t, dir, "command/method_refreshseries.go"); !strings.Contains(src, "func (c Client) RefreshSeriesAndWait(ctx context.Context, input mini.RefreshSeriesCommand, wait time.Duration) (result mini.GetCommandByIdResponse, err error) {") {
+		t.Errorf("the grouped command method lacks AndWait:\n%s", src)
+	}
+}

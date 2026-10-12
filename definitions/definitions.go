@@ -82,10 +82,31 @@ type Operation struct {
 	// Pageable is set for the list operations, which also get a Complete
 	// method that pages through every result.
 	Pageable *Pageable `json:"Pageable,omitempty"`
+	// Commands is set on an operation that queues commands named in its body, and says how a queued one is followed; Command is set
+	// on each command's own operation, one per name, which sends the same request with its name fixed and also gets an AndWait.
+	Commands *CommandSet `json:"Commands,omitempty"`
+	Command  string      `json:"Command,omitempty"`
 }
 
-// Key identifies an operation independently of its Go name.
-func (o *Operation) Key() string { return o.Method + " " + o.Path }
+// CommandSet is how a queued command is followed: Get is the Go name of the operation that answers one by its id, Status the field
+// of its answer that says how far it is, Finished the values that mean it is over and Failed those among them that mean it failed.
+type CommandSet struct {
+	Get      string   `json:"Get"`
+	Status   string   `json:"Status"`
+	Finished []string `json:"Finished"`
+	Failed   []string `json:"Failed,omitempty"`
+}
+
+// Key identifies an operation independently of its Go name; a command's
+// operation shares its method and path with the one that queues it, and is
+// told apart by its name.
+func (o *Operation) Key() string {
+	if o.Command != "" {
+		return o.Method + " " + o.Path + " " + o.Command
+	}
+
+	return o.Method + " " + o.Path
+}
 
 // PathParameter is a placeholder of the path template.
 type PathParameter struct {

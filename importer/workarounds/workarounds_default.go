@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"go/token"
 	"maps"
 	"net/http"
 	"reflect"
@@ -970,4 +971,72 @@ func answersWord(n int) string {
 	}
 
 	return fmt.Sprintf("%d answers", n)
+}
+
+// CommandSet is what Commands declares: Post is the operation that queues a command named in its body ("POST /api/v3/command"), Get
+// the one that answers a queued command by its id, Status the field of that answer that says how far the command is, Finished the
+// values that mean it is over and Failed those among them that mean it failed, and Commands each command's name as the server
+// takes it with the fields its body carries beside the name.
+type CommandSet struct {
+	Post     string
+	Get      string
+	Status   string
+	Finished []string
+	Failed   []string
+	Commands map[string]map[string]*openapi.Schema
+}
+
+// Commands is for a server that queues work by name through one operation whose document declares the body as an open record
+// (the *arr's POST /api/v3/command, "{"name": "RefreshSeries", "seriesId": 12}"), so that a caller writes the name and the fields
+// into a map nobody checks. Each command becomes a schema of its own, <Name>Command, with the fields given and the name, and the
+// generated package has a method per command that fixes the name, an AndWait form that polls the queued command until the server
+// says it finished, and WaitForCommand for one queued the plain way. It fails for an operation that is not there, a Post that takes
+// no JSON body, a status with no finished values, a command with no name, a schema the document has, and a Post declared twice.
+func Commands(about About, set CommandSet) Workaround {
+	return defaultWorkaround{about, func(spec *openapi.Spec, note func(string)) error {
+		post, err := targeted(spec, set.Post)
+		if err != nil {
+			return err
+		}
+		if _, err := targeted(spec, set.Get); err != nil {
+			return err
+		}
+		switch {
+		case post.Commands != nil:
+			return fmt.Errorf("%s has its commands declared already", set.Post)
+		case post.RequestBody == nil || post.RequestBody.Content[jsonMedia] == nil:
+			return fmt.Errorf("%s takes no JSON body", set.Post)
+		case set.Status == "" || len(set.Finished) == 0:
+			return errors.New("a command set needs the Status field and the Finished values")
+		case len(set.Commands) == 0:
+			return errors.New("it names no commands")
+		}
+		for _, name := range openapi.SortedKeys(set.Commands) {
+			if !token.IsIdentifier(name) || !token.IsExported(name) {
+				return fmt.Errorf("the command %q is not an exported Go name", name)
+			}
+			if spec.Components.Schemas[name+"Command"] != nil {
+				return fmt.Errorf("the document has a schema called %sCommand", name)
+			}
+		}
+		if spec.Components.Schemas == nil {
+			spec.Components.Schemas = map[string]*openapi.Schema{}
+		}
+		schemas := map[string]string{}
+		for _, name := range openapi.SortedKeys(set.Commands) {
+			properties := map[string]*openapi.Schema{"name": {Type: openapi.TypeString, Description: "The command's name, which the method sets."}}
+			for field, s := range set.Commands[name] {
+				if field == "name" {
+					return fmt.Errorf("the command %s names a field name, which is the command's own", name)
+				}
+				properties[field] = s
+			}
+			spec.Components.Schemas[name+"Command"] = &openapi.Schema{Type: openapi.TypeObject, Description: "The " + name + " command, as POST " + set.Post + " queues it.", Properties: properties}
+			schemas[name] = name + "Command"
+		}
+		post.Commands = &openapi.CommandSet{Get: set.Get, Status: set.Status, Finished: set.Finished, Failed: set.Failed, Commands: schemas}
+		note(fmt.Sprintf("%d commands declared", len(schemas)))
+
+		return nil
+	}}
 }
