@@ -347,3 +347,95 @@ func TestNumberedPathIDs(t *testing.T) {
 		t.Errorf("a second application: %v", err)
 	}
 }
+
+// A declared enum gains the values its server answers, once; a schema that is not there, not an enum, or lists the value already is refused.
+func TestEnumValues(t *testing.T) {
+	t.Parallel()
+
+	spec, err := openapi.Parse([]byte(`{"openapi": "3.0.1", "info": {"title": "Bare", "version": "1"}, "paths": {},
+  "components": {"schemas": {"Status": {"type": "string", "enum": ["continuing", "ended"]}, "Item": {"type": "object"}}}}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	w := workarounds.EnumValues(workarounds.About{Name: "bare-status-upcoming", Service: "bare", Bug: "the server answers upcoming"}, map[string][]string{"Status": {"upcoming", "deleted"}})
+	var notes []string
+	if err := applyNoting(t, w, spec, &notes); err != nil {
+		t.Fatal(err)
+	}
+	if got := len(spec.Components.Schemas["Status"].Enum); got != 4 || len(notes) != 1 || notes[0] != "upcoming, deleted added to Status" {
+		t.Errorf("Status has %d values, notes %q", got, notes)
+	}
+	for name, w := range map[string]workarounds.Workaround{
+		"again":       w,
+		"not there":   workarounds.EnumValues(workarounds.About{Name: "x", Service: "bare"}, map[string][]string{"Kind": {"a"}}),
+		"not an enum": workarounds.EnumValues(workarounds.About{Name: "x", Service: "bare"}, map[string][]string{"Item": {"a"}}),
+		"no values":   workarounds.EnumValues(workarounds.About{Name: "x", Service: "bare"}, map[string][]string{"Status": nil}),
+		"nothing":     workarounds.EnumValues(workarounds.About{Name: "x", Service: "bare"}, nil),
+	} {
+		if err := w.Apply(spec); err == nil {
+			t.Errorf("%s: no error", name)
+		}
+	}
+}
+
+// A record declared inline in several places becomes one component schema every place refers to; a place that matches nothing, a
+// record that differs, a name the document has, and a lone place are refused.
+func TestOneRecord(t *testing.T) {
+	t.Parallel()
+
+	const doc = `{"openapi": "3.0.1", "info": {"title": "Bare", "version": "1"}, "paths": {"/notes": {"get": {"operationId": "GetNotes", "responses": {"200": {"content": {"application/json": {"schema": {"type": "array", "items": {"type": "object", "properties": {"id": {"type": "integer"}, "config": {"type": "object", "properties": {"url": {"type": "string"}, "channel": {"type": "string"}}}}}}}}}}}, "post": {"operationId": "PostNote", "requestBody": {"content": {"application/json": {"schema": {"type": "object", "properties": {"config": {"type": "object", "properties": {"url": {"type": "string"}, "channel": {"type": "string"}}}}}}}}, "responses": {"200": {"content": {"application/json": {"schema": {"type": "object", "properties": {"id": {"type": "integer"}, "config": {"type": "object", "properties": {"url": {"type": "string"}, "channel": {"type": "string"}}}}}}}}}}}, "/odd": {"get": {"operationId": "GetOdd", "responses": {"200": {"content": {"application/json": {"schema": {"type": "object", "properties": {"config": {"type": "object", "properties": {"url": {"type": "string"}, "channel": {"type": "integer"}}}}}}}}}}}}, "components": {"schemas": {"Taken": {"type": "object"}}}}`
+	spec, err := openapi.Parse([]byte(doc))
+	if err != nil {
+		t.Fatal(err)
+	}
+	w := workarounds.OneRecord(workarounds.About{Name: "bare-note-config", Service: "bare", Bug: "the config is declared three times"}, map[string][]string{"NoteConfig": {"GET /notes config", "POST /notes config"}})
+	var notes []string
+	if err := applyNoting(t, w, spec, &notes); err != nil {
+		t.Fatal(err)
+	}
+	c := spec.Components.Schemas["NoteConfig"]
+	if c == nil || c.Properties["url"] == nil || len(notes) != 1 || notes[0] != "NoteConfig declared once for 2 places" {
+		t.Fatalf("the component = %+v, notes %q", c, notes)
+	}
+	get := spec.Paths["/notes"].Get.Responses["200"].Content["application/json"].Schema.Items.Properties["config"]
+	body := spec.Paths["/notes"].Post.RequestBody.Content["application/json"].Schema.Properties["config"]
+	answer := spec.Paths["/notes"].Post.Responses["200"].Content["application/json"].Schema.Properties["config"]
+	if get.RefName() != "NoteConfig" || body.RefName() != "NoteConfig" || answer.RefName() != "NoteConfig" {
+		t.Errorf("the places refer to %q, %q, %q", get.RefName(), body.RefName(), answer.RefName())
+	}
+
+	for name, tc := range map[string]struct {
+		records map[string][]string
+		want    string
+	}{
+		"again":    {map[string][]string{"NoteConfig": {"GET /notes config", "POST /notes config"}}, "the document has a schema called NoteConfig already"},
+		"differs":  {map[string][]string{"Config": {"GET /odd config", "GET /notes config"}}, "Config: the record at GET /odd config differs from the one at GET /notes config: channel is integer, not string"},
+		"nothing":  {map[string][]string{"Config": {"GET /notes config", "GET /nowhere config"}}, "Config: GET /nowhere config matches no inline object"},
+		"taken":    {map[string][]string{"Taken": {"GET /notes config", "POST /notes config"}}, "the document has a schema called Taken already"},
+		"one":      {map[string][]string{"Config": {"GET /notes config"}}, "Config has 1 place, and one record needs two or more"},
+		"no names": {nil, "it names no records"},
+	} {
+		fresh, _ := openapi.Parse([]byte(doc))
+		w := workarounds.OneRecord(workarounds.About{Name: "x", Service: "bare"}, tc.records)
+		if name == "again" {
+			fresh = spec
+		}
+		if err := w.Apply(fresh); err == nil || err.Error() != tc.want {
+			t.Errorf("%s: error = %v, want %s", name, err, tc.want)
+		}
+	}
+}
+
+// applyNoting applies a workaround collecting what it notes.
+func applyNoting(t *testing.T, w workarounds.Workaround, spec *openapi.Spec, notes *[]string) error {
+	t.Helper()
+
+	noting, ok := w.(interface {
+		ApplyNoting(*openapi.Spec, func(string)) error
+	})
+	if !ok {
+		t.Fatal("the workaround does not note what it reached")
+	}
+
+	return noting.ApplyNoting(spec, func(n string) { *notes = append(*notes, n) })
+}

@@ -736,3 +736,155 @@ func numberedAs(methods []openapi.Method, name string) *openapi.Schema {
 
 	return nil
 }
+
+// EnumValues is for an enum the document declares whose server answers a value it does not list (Sonarr's series status answering
+// upcoming): each named component schema gains the values given, so the generated constant exists and Known accepts it and the
+// sweep stops failing the answer. It fails for a schema that is not there or not an enum of strings, and for a value the document
+// lists already, which is how a document that caught up retires the line.
+func EnumValues(about About, values map[string][]string) Workaround {
+	return defaultWorkaround{about, func(spec *openapi.Spec, note func(string)) error {
+		if len(values) == 0 {
+			return errors.New("it names no enums")
+		}
+		for _, name := range openapi.SortedKeys(values) {
+			s := spec.Components.Schemas[name]
+			switch {
+			case s == nil:
+				return fmt.Errorf("no component schema is called %s", name)
+			case !s.IsEnum():
+				return fmt.Errorf("%s is not an enum of strings", name)
+			case len(values[name]) == 0:
+				return fmt.Errorf("%s gets no values", name)
+			}
+			listed := map[string]bool{}
+			for _, raw := range s.Enum {
+				var v string
+				if json.Unmarshal(raw, &v) == nil {
+					listed[v] = true
+				}
+			}
+			for _, v := range values[name] {
+				if listed[v] {
+					return fmt.Errorf("%s lists %s already", name, v)
+				}
+				raw, _ := json.Marshal(v)
+				s.Enum = append(s.Enum, raw)
+			}
+			note(fmt.Sprintf("%s added to %s", strings.Join(values[name], ", "), name))
+		}
+
+		return nil
+	}}
+}
+
+// OneRecord is for a document that declares the same record inline wherever it appears (Dockhand's notification config, declared six
+// times over as many operations), so that the generated package has a model per place and a caller converts between them. Each
+// name is a model to make, and its places are where the record is declared, as a workaround's In names them: an operation and a path
+// inside its answer or its body ("GET /api/notifications config", "POST /api/notifications config", the request and the answer both
+// where an operation has the path on each). Every place becomes a reference to one component schema of the name, so the operations
+// share one model. It fails for a name the document has a schema of already, a place that matches nothing, fewer than two places,
+// and a place whose record differs from the first's, naming the property, which is the check a conversion never made.
+func OneRecord(about About, records map[string][]string) Workaround {
+	return defaultWorkaround{about, func(spec *openapi.Spec, note func(string)) error {
+		if len(records) == 0 {
+			return errors.New("it names no records")
+		}
+		for _, name := range openapi.SortedKeys(records) {
+			if spec.Components.Schemas[name] != nil {
+				return fmt.Errorf("the document has a schema called %s already", name)
+			}
+			places := records[name]
+			if len(places) < 2 {
+				return fmt.Errorf("%s has %d place, and one record needs two or more", name, len(places))
+			}
+			var first *openapi.Schema
+			firstAt := ""
+			matched := make([]int, len(places))
+			var differs error
+			spec.EachSchema(func(where, path string, s *openapi.Schema) {
+				if differs != nil || s.Ref != "" || s.Type != openapi.TypeObject {
+					return
+				}
+				for i, entry := range places {
+					if !openapi.PlaceOf(entry).Matches(where, path) {
+						continue
+					}
+					matched[i]++
+					if first == nil {
+						// a copy, since the place itself becomes the reference
+						first, firstAt = new(openapi.Schema), entry
+						*first = *s
+					} else if why := differ(first, s); why != "" {
+						differs = fmt.Errorf("%s: the record at %s differs from the one at %s: %s", name, entry, firstAt, why)
+
+						return
+					}
+					*s = openapi.Schema{Ref: openapi.SchemaRefPrefix + name}
+				}
+			})
+			if differs != nil {
+				return differs
+			}
+			for i, n := range matched {
+				if n == 0 {
+					return fmt.Errorf("%s: %s matches no inline object", name, places[i])
+				}
+			}
+			if spec.Components.Schemas == nil {
+				spec.Components.Schemas = map[string]*openapi.Schema{}
+			}
+			spec.Components.Schemas[name] = first
+			note(fmt.Sprintf("%s declared once for %s", name, placesWord(len(places))))
+		}
+
+		return nil
+	}}
+}
+
+// differ says how two inline records differ, by the first property that does, or "" when they are one shape: the same properties of
+// the same types, descriptions aside.
+func differ(a, b *openapi.Schema) string {
+	for _, name := range openapi.SortedKeys(a.Properties) {
+		if b.Properties[name] == nil {
+			return "no " + name
+		}
+	}
+	for _, name := range openapi.SortedKeys(b.Properties) {
+		if a.Properties[name] == nil {
+			return "an extra " + name
+		}
+	}
+	for _, name := range openapi.SortedKeys(a.Properties) {
+		if shapeOf(a.Properties[name]) != shapeOf(b.Properties[name]) {
+			return name + " is " + shapeOf(b.Properties[name]) + ", not " + shapeOf(a.Properties[name])
+		}
+	}
+
+	return ""
+}
+
+// shapeOf is a property's shape as text, descriptions left out.
+func shapeOf(s *openapi.Schema) string {
+	if s == nil {
+		return "nothing"
+	}
+	if s.Ref != "" {
+		return s.RefName()
+	}
+	var out strings.Builder
+	out.WriteString(s.Type)
+	if s.Format != "" {
+		out.WriteString(" " + s.Format)
+	}
+	if s.Nullable {
+		out.WriteString(" nullable")
+	}
+	if s.Items != nil {
+		out.WriteString(" of " + shapeOf(s.Items))
+	}
+	for _, name := range openapi.SortedKeys(s.Properties) {
+		out.WriteString(" " + name + ":" + shapeOf(s.Properties[name]))
+	}
+
+	return out.String()
+}
