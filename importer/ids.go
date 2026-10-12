@@ -200,7 +200,7 @@ func (im *importer) idBase(c config.ID) (definitions.ObjectType, bool) {
 
 			return "", false
 		}
-		f := fieldNamed(m.Fields, "id")
+		f := idField(m.Fields)
 		if f == nil {
 			im.fail(fmt.Sprintf("%s: Of names %s, which has no id", c.Name, name))
 
@@ -305,6 +305,17 @@ func claims(k *idKind, p *place, groups map[string]*definitions.Group, inUsed, e
 
 // pathIsOf reports whether the path of the operation at where is one of the
 // kind's: an operation on that path, by any method, answers or takes one of
+// idField is a model's own id, spelt id or Id (Emby and Jellyfin capitalise theirs), or nil.
+func idField(fields []definitions.Field) *definitions.Field {
+	for i := range fields {
+		if strings.EqualFold(fields[i].JSONName, "id") {
+			return &fields[i]
+		}
+	}
+
+	return nil
+}
+
 // the kind's models, alone or as a list; or the path is under such a path
 // (/movie/{id}/folder under /movie/{id}), whose {id} it carries. A delete
 // answers nothing and a sub-path answers something else, so the GET or PUT

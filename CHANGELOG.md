@@ -1,3 +1,8 @@
+## Unreleased
+
+- **`Of` reads a model whose id is spelt `Id`.** Emby and Jellyfin capitalise theirs, and the lookup wanted the exact lower-case name, so the kind was refused as naming a model with no id. Embyfin got past it with a `Base` beside `Of`; that can go.
+- **The generated test of a joined list sets one form.** `JoinedLists` puts a list beside its string under one name on the wire, and the test set both on one call and then expected each alone, so every such test failed; on Emby that was 70 across 21 packages. The test now sets the string alone.
+
 ## v0.8.2 (2026-10-12)
 
 - **A name in both `Names` and `Joined` imports.** Prowlarr's `tags` is a joined string parameter and a field of fifteen models; v0.8.1 claimed the parameter by name first and then refused the `Joined` entry as reaching nothing, and without the entry refused the parameter as a string. The parameter is claimed as joined before it is claimed by name.

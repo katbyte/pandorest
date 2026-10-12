@@ -1310,6 +1310,30 @@ func TestIDs(t *testing.T) {
 	}
 }
 
+// Of reads the base off a model that spells its id Id, as Emby and Jellyfin do, so the kind needs no Base beside it.
+func TestIDsSpeltId(t *testing.T) {
+	t.Parallel()
+
+	spec, err := openapi.Parse([]byte(`{"openapi": "3.0.1", "info": {"title": "Emby", "version": "1"}, "paths": {
+    "/Items/{id}": {"get": {"operationId": "GetItemsById", "tags": ["Items"], "parameters": [{"name": "id", "in": "path", "required": true, "schema": {"type": "string"}}],
+      "responses": {"200": {"content": {"application/json": {"schema": {"$ref": "#/components/schemas/BaseItemDto"}}}}}}}},
+  "components": {"schemas": {"BaseItemDto": {"type": "object", "properties": {"Id": {"type": "string"}, "Name": {"type": "string"}}}}}}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg := config.Service{Name: "emby", Package: "emby", Naming: config.OperationIDNaming, Auth: "APIKey", IDs: []config.ID{{Name: "ItemID", Of: []string{"BaseItemDto"}}}}
+	svc, err := FromSpec(cfg, spec, nil, func(string) {})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := fieldNamed(svc.Models()["BaseItemDto"].Fields, "Id").Type; got != (definitions.TypeRef{Type: definitions.ID, ReferenceName: "ItemID"}) {
+		t.Errorf("BaseItemDto.Id = %+v", got)
+	}
+	if len(svc.IDs) != 1 || svc.IDs[0].Base != definitions.String {
+		t.Errorf("kinds = %+v", svc.IDs)
+	}
+}
+
 // A command set makes an operation per command beside the one that queues them, each sending its own schema and fixed to its name,
 // told apart by its key; the set's Get resolves to that operation's Go name.
 func TestCommands(t *testing.T) {
