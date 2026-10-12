@@ -255,9 +255,9 @@ func (g *gen) testFile(o *definitions.Operation) string {
 			b.WriteString("\tif body != \"raw bytes\" {\n\t\tt.Errorf(\"body = %q, want the raw bytes\", body)\n\t}\n")
 		} else {
 			b.WriteString("\tif !json.Valid([]byte(body)) {\n\t\tt.Errorf(\"body = %q, want JSON\", body)\n\t}\n")
-			if g.emptyBodyIsEmpty(o) {
-				// a record with nothing set sends nothing: a flag never set must not go out as false
-				b.WriteString("\tif body != \"{}\" {\n\t\tt.Errorf(\"an empty record sent %q: a field never set went out\", body)\n\t}\n")
+			if want, ok := g.emptyBodyJSON(o); ok {
+				// a record with nothing set sends only what the document requires: a flag never set must not go out as false
+				fmt.Fprintf(&b, "\tif body != %q {\n\t\tt.Errorf(\"an empty record sent %%q, want %%q: a field never set went out\", body, %q)\n\t}\n", want, want)
 			}
 		}
 	}
@@ -735,22 +735,62 @@ func (g *gen) sampleID(kind, name string) (expr, wire string) {
 	return g.typeName(kind) + "(7)", "7"
 }
 
-// emptyBodyIsEmpty reports whether an operation's request body, sent with
-// nothing set, must go out as {}: a struct model that is not written back
-// whole and requires no field, so every field is left out at its zero.
-func (g *gen) emptyBodyIsEmpty(o *definitions.Operation) bool {
+// emptyBodyJSON is what an operation's request body must go out as when
+// nothing is set: {} for a struct model with no required field, else the
+// required fields alone at their zeros, in the model's order; nothing else
+// may appear. Not for a model written back whole, which sends everything.
+func (g *gen) emptyBodyJSON(o *definitions.Operation) (string, bool) {
 	if o.Request == nil || o.Request.Type.Type != definitions.Reference {
-		return false
+		return "", false
 	}
 	m := g.models[o.Request.Type.ReferenceName]
 	if m == nil || m.WrittenWhole || len(m.Union) > 0 {
-		return false
+		return "", false
 	}
+	var parts []string
 	for i := range m.Fields {
-		if m.Fields[i].Required {
-			return false
+		f := &m.Fields[i]
+		if !f.Required {
+			continue
 		}
+		zero, ok := g.zeroJSON(m, f)
+		if !ok {
+			return "", false
+		}
+		parts = append(parts, strconv.Quote(f.JSONName)+":"+zero)
 	}
 
-	return true
+	return "{" + strings.Join(parts, ",") + "}", true
+}
+
+// zeroJSON is the JSON a required field of a model sends when nothing set
+// it, or false for a kind whose zero this cannot say.
+func (g *gen) zeroJSON(m *definitions.Model, f *definitions.Field) (string, bool) {
+	if g.fieldType(m, f)[0] == '*' || f.Type.Type == definitions.List || f.Type.Type == definitions.Dictionary {
+		return "null", true
+	}
+	switch f.Type.Type {
+	case definitions.Boolean:
+		return "false", true
+	case definitions.Integer, definitions.Integer64, definitions.Float, definitions.Double:
+		return "0", true
+	case definitions.String:
+		return `""`, true
+	case definitions.DateTime, definitions.Date, definitions.UnixSeconds, definitions.UnixMillis:
+		return "null", true
+	case definitions.ID:
+		if g.idBase(f.Type.ReferenceName) == definitions.String {
+			return `""`, true
+		}
+
+		return "0", true
+	case definitions.Reference:
+		if g.constants[f.Type.ReferenceName] != nil {
+			return `""`, true
+		}
+
+		return "", false
+	default:
+		return "", false
+	}
 }
