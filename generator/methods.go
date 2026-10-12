@@ -115,17 +115,24 @@ func (g *gen) writeResponse(b *strings.Builder, o *definitions.Operation, respon
 	}
 	embedded := g.embedded(o)
 	if embedded != "" {
-		fmt.Fprintf(b, "//\n// Answer is the %s answered, nil when the server answered none (a 204), and the\n// same record is embedded, so res.Answer.Name may be read as res.Name.\n", embedded)
+		fmt.Fprintf(b, "//\n// Answer is the %s answered, nil when the server answered none (a 204), which\n// Answered tells. The same record is embedded, so res.Answer.Name may be read as\n// res.Name; when nothing was answered the embedded record is a zero one, so that\n// read is empty rather than a panic. Only the method sets the two; a response built\n// by hand sets both or neither.\n", embedded)
 		g.checkEmbedded(o)
 	}
+	typ, _ := g.responseModel(o)
 	fmt.Fprintf(b, "type %s struct {\n\tHttpResponse *http.Response\n", responseType)
-	if typ, _ := g.responseModel(o); typ != "" {
+	if typ != "" {
 		fmt.Fprintf(b, "\tAnswer %s\n", typ)
 	}
 	if embedded != "" {
 		fmt.Fprintf(b, "\t*%s\n", embedded)
 	}
 	b.WriteString("}\n\n")
+	if typ != "" {
+		fmt.Fprintf(b, "// Answered reports whether the server answered with a body that was decoded:\n// false for a 204, or a call that failed before one came.\nfunc (r %s) Answered() bool { return r.Answer != nil }\n\n", responseType)
+	}
+	if embedded != "" {
+		fmt.Fprintf(b, "// Record is the %[2]s answered, as a value to change and write back, or an\n// error when the server answered none.\nfunc (r %[1]s) Record() (%[2]s, error) {\n\tif r.Answer == nil {\n\t\treturn %[2]s{}, errors.New(\"%[3]s answered no %[2]s\")\n\t}\n\n\treturn *r.Answer, nil\n}\n\n", responseType, embedded, o.Name)
+	}
 	if file {
 		fmt.Fprintf(b, readerMethods, responseType)
 	}
@@ -221,7 +228,7 @@ func (g *gen) checkEmbedded(o *definitions.Operation) {
 	}
 	if m := g.models[name]; m != nil {
 		for i := range m.Fields {
-			if f := m.Fields[i].Name; f == "Answer" || f == "HttpResponse" {
+			if f := m.Fields[i].Name; f == "Answer" || f == "HttpResponse" || f == "Answered" || f == "Record" {
 				g.clashes = append(g.clashes, fmt.Sprintf("%s.%s would be hidden by the field of the same name on %s's response, which embeds the model: rename it with a workaround", name, f, o.Name))
 			}
 		}
@@ -542,6 +549,10 @@ func (g *gen) writeMethod(b *strings.Builder, o *definitions.Operation, response
 	fmt.Fprintf(b, "func (c Client) %s(%s) (result %s, err error) {\n",
 		o.Name, strings.Join(append([]string{"ctx context.Context"}, params...), ", "), responseType)
 	g.writeOptionsPrelude(b, o, o.Name, optionsType)
+	if embedded := g.embedded(o); embedded != "" {
+		// a zero record until one is decoded, so a promoted field reads empty rather than panicking
+		fmt.Fprintf(b, "\tresult.%s = &%s{}\n", embeddedField(embedded), embedded)
+	}
 
 	b.WriteString("\topts := client.RequestOptions{\n")
 	if asksFor := o.Response.AsksFor(); asksFor != "" {

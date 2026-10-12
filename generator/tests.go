@@ -269,9 +269,10 @@ func (g *gen) testFile(o *definitions.Operation) string {
 		b.WriteString("\n\t// a 204 is a null result, with no model\n")
 		b.WriteString("\tc, _ = newOperationServer(t, http.StatusNoContent, \"\", \"\")\n")
 		fmt.Fprintf(&b, "\tresult, err = %s\n", call.expr)
-		b.WriteString("\tif err != nil || result.Answer != nil {\n\t\tt.Errorf(\"a 204 = %v, answer %v\", err, result.Answer)\n\t}\n")
+		b.WriteString("\tif err != nil || result.Answer != nil || result.Answered() {\n\t\tt.Errorf(\"a 204 = %v, answer %v, answered %t\", err, result.Answer, result.Answered())\n\t}\n")
 		if embedded := g.embedded(o); embedded != "" {
-			fmt.Fprintf(&b, "\tif result.%s != nil {\n\t\tt.Error(\"a 204 left an embedded answer\")\n\t}\n", embeddedField(embedded))
+			fmt.Fprintf(&b, "\tif result.%s == nil {\n\t\tt.Error(\"a 204 left no zero record behind the promoted fields\")\n\t}\n", embeddedField(embedded))
+			b.WriteString("\tif _, err := result.Record(); err == nil {\n\t\tt.Error(\"Record of a 204 succeeded\")\n\t}\n")
 		}
 	}
 
@@ -641,14 +642,15 @@ func (g *gen) responseChecks(o *definitions.Operation, call testCallInfo) string
 	case o.Response.Text():
 		return fmt.Sprintf("\tif result.Answer == nil || *result.Answer != %q {\n\t\tt.Errorf(\"the text was not held as it was sent: %%v\", result.Answer)\n\t}\n", sampleText)
 	case pointer:
-		check := "\tif result.Answer == nil {\n\t\tt.Error(\"the answer was not decoded\")\n\t}\n"
+		check := "\tif result.Answer == nil || !result.Answered() {\n\t\tt.Error(\"the answer was not decoded\")\n\t}\n"
 		if embedded := g.embedded(o); embedded != "" {
 			check += "\tif result." + embeddedField(embedded) + " != result.Answer {\n\t\tt.Error(\"the embedded answer is not the answer\")\n\t}\n"
+			check += "\tif record, err := result.Record(); err != nil || !reflect.DeepEqual(record, *result.Answer) {\n\t\tt.Errorf(\"Record = %+v, %v\", record, err)\n\t}\n"
 		}
 
 		return check
 	case typ == "json.RawMessage" || strings.HasPrefix(typ, "[]") || strings.HasPrefix(typ, "map["):
-		return "\tif result.Answer == nil {\n\t\tt.Error(\"the answer was not decoded\")\n\t}\n"
+		return "\tif result.Answer == nil || !result.Answered() {\n\t\tt.Error(\"the answer was not decoded\")\n\t}\n"
 	default:
 		// a union alias or any: decoded as raw JSON
 		return "\t_ = result.Answer\n"

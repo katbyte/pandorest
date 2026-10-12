@@ -363,6 +363,7 @@ func (g *gen) fileHeader(body string) string {
 		{"net/http", "http."},
 		{"net/http/httptest", "httptest."},
 		{"net/url", "url."},
+		{"reflect", "reflect."},
 		{"slices", "slices."},
 		{"strconv", "strconv."},
 		{"strings", "strings."},
