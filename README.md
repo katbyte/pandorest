@@ -75,7 +75,7 @@ It is run from the repository root, usually by make:
 go run ./sdk/pandorest import      # each service's highest-versioned spec into its definitions, applying the workarounds
 go run ./sdk/pandorest generate    # the packages, from those definitions
 go run ./sdk/pandorest diff        # what the specs change against the checked-in definitions, breaking changes marked
-go run ./sdk/pandorest check       # the definitions match the specs, every operation has a method, and how many the repository's own files name (-uncalled lists the rest, -callers tools/ counts one directory)
+go run ./sdk/pandorest check       # the definitions match the specs, every operation has a method, and how many the repository's own files name, tests left out (-uncalled lists the rest, -callers tools/ counts one directory)
 go run ./sdk/pandorest resolve     # which document and definitions each service is at
 ```
 

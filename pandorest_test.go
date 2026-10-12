@@ -171,9 +171,9 @@ func TestImportGenerateCheck(t *testing.T) {
 		t.Errorf("generate reported:\n%s", stdout)
 	}
 	mini := listFiles(t, filepath.Join(root, "sdk", "mini"))
-	// every file is known as generated and carries the header, doc.go included, whose package comment follows it
+	// every file is known as generated; all carry the header but doc.go, whose package comment a linter must be able to see
 	for name, src := range mini {
-		if !generator.Generated([]byte(src)) || !strings.HasPrefix(src, generator.Header) || (name == "doc.go" && !strings.Contains(src, "\n\n// Package mini is")) {
+		if !generator.Generated([]byte(src)) || strings.HasPrefix(src, generator.Header) == (name == "doc.go") {
 			t.Errorf("%s is not marked as a generated file should be:\n%s", name, strings.SplitN(src, "\n", 2)[0])
 		}
 	}
@@ -209,6 +209,14 @@ func TestImportGenerateCheck(t *testing.T) {
 	stdout, _, err = runCmd(t, "check", "-root", root, "-quiet", "-uncalled")
 	if err != nil || !strings.Contains(stdout, "mini: 1 of 4 methods are named by a hand-written file in the repository\n  never named: GetItem, GetItemsComplete, GetItemsEach\n") || !strings.Contains(stdout, "other: 0 of 1 methods are named") {
 		t.Errorf("check -uncalled = %v:\n%s", err, stdout)
+	}
+	// a test naming a method is not a tool wrapping it
+	if err := os.WriteFile(filepath.Join(root, "tools_test.go"), []byte("package tools\n\nfunc useInTest(c interface{ GetItemsComplete() }) { c.GetItemsComplete() }\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	stdout, _, err = runCmd(t, "check", "-root", root, "-quiet")
+	if err != nil || !strings.Contains(stdout, "mini: 1 of 4 methods are named by a hand-written file in the repository\n") {
+		t.Errorf("check with a test naming a method = %v:\n%s", err, stdout)
 	}
 	// -callers limits the count to one directory, so the SDK's own suite does not count as a tool wrapping a method
 	if err := os.MkdirAll(filepath.Join(root, "tools"), 0o750); err != nil {

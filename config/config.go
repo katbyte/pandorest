@@ -257,7 +257,9 @@ type Service struct {
 	// left out as null, which is not the value that was read. A name the
 	// document does not have fails the import.
 	WrittenWhole []string
-	// KeepNull names the model fields, as Schema.property, whose zero is
+	// KeepNull names the model fields, as Schema.property, or as
+	// Model.property for a record the document declares inline and the
+	// importer names (Dockhand's PostRegistriesTestAnswer), whose zero is
 	// not their absence, which the SDK holds as pointers where it holds
 	// every other number and string by value. A number: season 0 is the
 	// specials and a parental limit of 0 is the strictest, so a season or a

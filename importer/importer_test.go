@@ -700,20 +700,22 @@ func TestKeepNull(t *testing.T) {
 			t.Fatal(err)
 		}
 		spec.Components.Schemas["Item"].Properties["Season"] = &openapi.Schema{Type: openapi.TypeInteger, Nullable: true}
+		// an inline record the importer names, which KeepNull reaches by that name
+		spec.Components.Schemas["Item"].Properties["Blur"].Properties["Ok"] = &openapi.Schema{Type: openapi.TypeBoolean}
 		cfg := miniConfig
 		cfg.KeepNull = keep
 
 		return FromSpec(cfg, spec, nil, func(msg string) { t.Log(msg) })
 	}
 
-	svc, err := importKeeping(t, "Item.Season", "Item.Id")
+	svc, err := importKeeping(t, "Item.Season", "Item.Id", "ItemBlur.Ok")
 	if err != nil {
 		t.Fatal(err)
 	}
 	kept := 0
 	for _, m := range svc.Models() {
 		for _, f := range m.Fields {
-			want := m.SchemaName == "Item" && (f.JSONName == "Season" || f.JSONName == "Id")
+			want := m.SchemaName == "Item" && (f.JSONName == "Season" || f.JSONName == "Id") || m.Name == "ItemBlur" && f.JSONName == "Ok"
 			if f.KeepsNull != want {
 				t.Errorf("%s.%s keeps null %t, want %t", m.Name, f.JSONName, f.KeepsNull, want)
 			}
@@ -722,8 +724,8 @@ func TestKeepNull(t *testing.T) {
 			}
 		}
 	}
-	if kept != 2 {
-		t.Errorf("%d fields keep null, want Item.Season and Item.Id alone", kept)
+	if kept != 3 {
+		t.Errorf("%d fields keep null, want Item.Season, Item.Id and ItemBlur.Ok alone", kept)
 	}
 
 	for keep, want := range map[string]string{

@@ -304,20 +304,36 @@ func (r *Report) add(out Outcome) {
 }
 
 // NeverCalled is what a live run left unreached: the operations none of the
-// calls recorded (client.WithCalls) went to, by method and path template,
-// each of which must be excused by name with a reason, and the excuses that
-// name no operation. Every line is a problem for the run to fail on; none
-// is a run that reached everything it did not excuse. A call's path may
-// carry a base path before the template's segments.
+// calls recorded (client.WithCalls) were for, each of which must be excused
+// by name with a reason; an excused operation the run called after all, so
+// the excuse is stale; and an excuse that names no operation. Every line is
+// a problem for the run to fail on; none is a run that reached everything it
+// did not excuse. A call a generated method sent names its operation; one
+// written by hand is given to the single most literal operation its method
+// and path fit, so a lookup under /series does not count for /series/{id}. A
+// call's path may carry a base path before the template's segments.
 func NeverCalled(defs *definitions.Service, calls []client.Call, excused map[string]string) []string {
-	var problems []string
-	names := map[string]bool{}
-	for _, op := range defs.Operations() {
-		names[op.Name] = true
-		if excused[op.Name] != "" {
+	ops := defs.Operations()
+	called := map[string]bool{}
+	for _, c := range calls {
+		if c.Operation != "" {
+			called[c.Operation] = true
+
 			continue
 		}
-		if !slices.ContainsFunc(calls, func(c client.Call) bool { return c.Method == op.Method && pathMatches(op.Path, c.Path) }) {
+		if op := mostLiteral(ops, c); op != nil {
+			called[op.Name] = true
+		}
+	}
+
+	var problems []string
+	names := map[string]bool{}
+	for _, op := range ops {
+		names[op.Name] = true
+		switch {
+		case called[op.Name] && excused[op.Name] != "":
+			problems = append(problems, fmt.Sprintf("%s (%s) is excused but was called, so drop its excuse (%s)", op.Name, op.Key(), excused[op.Name]))
+		case !called[op.Name] && excused[op.Name] == "":
 			problems = append(problems, fmt.Sprintf("%s (%s) was never called, and is not excused", op.Name, op.Key()))
 		}
 	}
@@ -328,6 +344,22 @@ func NeverCalled(defs *definitions.Service, calls []client.Call, excused map[str
 	}
 
 	return problems
+}
+
+// mostLiteral is the operation a hand-written call was for: of those its method and path fit, the one with the fewest placeholders,
+// or nil when none fits.
+func mostLiteral(ops []*definitions.Operation, c client.Call) *definitions.Operation {
+	var best *definitions.Operation
+	for _, op := range ops {
+		if op.Command != "" || c.Method != op.Method || !pathMatches(op.Path, c.Path) {
+			continue
+		}
+		if best == nil || strings.Count(op.Path, "{") < strings.Count(best.Path, "{") {
+			best = op
+		}
+	}
+
+	return best
 }
 
 // pathMatches reports whether a path a request went to is the template's,

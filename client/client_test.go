@@ -880,7 +880,7 @@ func TestCalls(t *testing.T) {
 		t.Fatal(err)
 	}
 	_, _ = execute(t, c, get("/api/v3/gone"))
-	if got := calls.Seen(); len(got) != 2 || got[0] != (client.Call{Method: http.MethodGet, Path: "/api/v3/items"}) || got[1].Path != "/api/v3/gone" {
+	if got := calls.Seen(); len(got) != 2 || got[0] != (client.Call{Method: http.MethodGet, Path: "/api/v3/items"}) || got[1].Path != "/api/v3/gone" || got[0].Operation != "" {
 		t.Errorf("Seen = %+v", got)
 	}
 }

@@ -1,3 +1,10 @@
+## Unreleased
+
+- **`doc.go` carries no generated header after all.** A linter skips a file marked generated and then misses the package comment, and flags the hand-written file beside it as lacking one, which sonarr's move found; the comment's first line says what wrote it, and every check knows that form.
+- **A test naming a method is not a tool wrapping it.** `check` counts only non-test files, and `-callers` with it.
+- **`KeepNull` names a field of an inline record by the model's name** (`PostRegistriesTestAnswer.authenticated`), where it took only the document's schema name and a document with no components could name nothing. Dockhand's one answered boolean where absent is not false.
+- **`NeverCalled` counts a call for the one operation it was for.** A generated method names its operation on the request, so no path matching is needed; a hand-written call goes to the most literal template it fits, where a lookup beside a by-id path used to count for both; and an excused operation the run called after all is reported, so the list cannot go stale. Sonarr read both against the lines it replaces.
+
 ## v0.8.0 (2026-10-11)
 
 - **For a server that queues work by name.** `Commands` declares each command and its fields once, and the client gets a method per command, an `AndWait` form that queues it and waits until the server says it finished, and `WaitForCommand` for one queued the plain way. The hand-written maps and poll loops in the three *arr repositories go.
@@ -8,7 +15,7 @@
 
 - **A 200 that says no.** `Outcome` on a service names the field and the values that mean the call failed, and such a call is an error with the answer still decoded.
 
-- **Every generated file carries the header**, `doc.go` included; the old form is still recognised, so the first generation after upgrading replaces it.
+- **Every generated file carries the header**, `doc.go` included; the old form is still recognised, so the first generation after upgrading replaces it. (Undone in the next release: see above.)
 
 ## v0.7.0 (2026-10-11)
 

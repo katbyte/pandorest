@@ -721,6 +721,7 @@ func (g *gen) writeMethod(b *strings.Builder, o *definitions.Operation, response
 	}
 	b.WriteString("\t\t},\n")
 	fmt.Fprintf(b, "\t\tHTTPMethod: %s,\n", httpMethods[o.Method])
+	fmt.Fprintf(b, "\t\tOperation: %q,\n", o.Name)
 	if len(o.Options) > 0 {
 		fmt.Fprintf(b, "\t\tOptionsObject: %s,\n", g.optionsVar(o))
 	}

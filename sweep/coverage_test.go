@@ -93,16 +93,24 @@ func TestNeverCalled(t *testing.T) {
 	defs := &definitions.Service{Name: "mini", Groups: []definitions.Group{{Name: "Items", Operations: []definitions.Operation{
 		{Name: "GetItems", Method: "GET", Path: "/api/v3/items"},
 		{Name: "GetItem", Method: "GET", Path: "/api/v3/items/{id}"},
+		{Name: "GetItemLookup", Method: "GET", Path: "/api/v3/items/lookup"},
 		{Name: "DeleteItem", Method: "DELETE", Path: "/api/v3/items/{id}"},
 		{Name: "GetTags", Method: "GET", Path: "/api/v3/tags"},
 	}}}}
-	calls := []client.Call{{Method: "GET", Path: "/sonarr/api/v3/items"}, {Method: "GET", Path: "/api/v3/items/12"}, {Method: "GET", Path: "/api/v3/tags/1"}}
+	// a call a generated method sent names its operation; a hand-written one goes to the most literal template it fits, so the
+	// lookup under /items does not count for GetItem
+	calls := []client.Call{{Method: "GET", Path: "/sonarr/api/v3/items", Operation: "GetItems"}, {Method: "GET", Path: "/api/v3/items/lookup"}, {Method: "GET", Path: "/api/v3/tags/1"}}
 	got := NeverCalled(defs, calls, map[string]string{"GetTags": "needs a tag", "GetGone": "no such thing"})
-	want := []string{"DeleteItem (DELETE /api/v3/items/{id}) was never called, and is not excused", "the excuse for GetGone names no operation"}
+	want := []string{"GetItem (GET /api/v3/items/{id}) was never called, and is not excused", "DeleteItem (DELETE /api/v3/items/{id}) was never called, and is not excused", "the excuse for GetGone names no operation"}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("NeverCalled = %q, want %q", got, want)
 	}
-	if got := NeverCalled(defs, calls, map[string]string{"GetTags": "needs a tag", "DeleteItem": "never in a read suite"}); len(got) != 0 {
+	// an excused operation the run called after all is a stale excuse
+	stale := NeverCalled(defs, append(calls, client.Call{Method: "GET", Path: "/api/v3/items/12"}), map[string]string{"GetItem": "needs an item", "DeleteItem": "never in a read suite", "GetTags": "needs a tag"})
+	if want := []string{"GetItem (GET /api/v3/items/{id}) is excused but was called, so drop its excuse (needs an item)"}; !reflect.DeepEqual(stale, want) {
+		t.Errorf("a stale excuse = %q, want %q", stale, want)
+	}
+	if got := NeverCalled(defs, append(calls, client.Call{Method: "GET", Path: "/api/v3/items/12"}), map[string]string{"DeleteItem": "never in a read suite", "GetTags": "needs a tag"}); len(got) != 0 {
 		t.Errorf("a run that reached or excused everything = %q", got)
 	}
 }
