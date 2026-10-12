@@ -1279,6 +1279,7 @@ func TestIDs(t *testing.T) {
 		"an In matching nothing":           {ids: []config.ID{{Name: "SeriesID", Of: []string{"SeriesResource"}, In: []string{"SeriesResource .nothing"}}}, want: `SeriesID: In "SeriesResource .nothing" matches no plain id`},
 		"a string kind on a number":        {ids: []config.ID{{Name: "SeriesID", Base: "string", Names: []string{"seriesId"}}}, want: "GET /episode seriesId is a Integer, which cannot be a SeriesID (String)"},
 		"a joined string not named Joined": {ids: []config.ID{{Name: "SeriesID", Of: []string{"SeriesResource"}, Names: []string{"ids"}}}, want: "GET /series ids is a String, which cannot be a SeriesID (Integer); a string that carries several joined by commas is named in Joined"},
+		"a Joined written as a place":      {ids: []config.ID{{Name: "SeriesID", Of: []string{"SeriesResource"}, Joined: []string{"GET /series ids"}}}, want: `SeriesID: Joined "GET /series ids" matches no string parameter: it takes a parameter's name, not a place`},
 		"a base that is not a type":        {ids: []config.ID{{Name: "SeriesID", Base: "float", Names: []string{"seriesId"}}}, want: `SeriesID: Base "float" is not int, int64 or string`},
 		"a shape with an example":          {ids: []config.ID{{Name: "SeriesID", Of: []string{"SeriesResource"}, Shape: "^[1-9][0-9]*$", Example: "12"}}, want: ""},
 		"a shape that is no expression":    {ids: []config.ID{{Name: "SeriesID", Of: []string{"SeriesResource"}, Shape: "^[", Example: "1"}}, want: `SeriesID: Shape "^[" is not a regular expression`},
