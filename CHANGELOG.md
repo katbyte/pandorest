@@ -1,3 +1,11 @@
+## Unreleased
+
+- `client.WithCalls` records every request a client sends, and `sweep.NeverCalled` holds a whole live suite to its definitions: each operation no recorded call reached must be excused by name with a reason, and an excuse naming no operation is a problem too, which is what sonarr wrote 149 lines for; a call's path may carry a base path before the template
+- `check -callers tools/` counts the methods named by hand-written files under one directory rather than the whole repository, so the SDK's own suite does not count as a tool wrapping a method
+- a secret is never repeated by an error: the credential the authorizer holds and any value named with `client.WithSecrets` read `***` in a status error's body and messages, a refused request's path and a decode failure's preview, and the generated `TestNew` proves it on a refusal that echoes the token. The generated `New` names the credential a secret whatever the authorizer makes of it; a service that supplies its own `New` text (`Client`) passes `client.WithSecrets(credential)` itself, or that test says so
+- `Outcome` on a service, for a server that answers 200 to everything and says in the body whether the call worked: the field, the values that mean failure with what each means, and the field with the server's words; such a call returns a `*client.OutcomeError` with the answer still decoded, and `client.OutcomeValue(err)` is the value to branch on
+- every generated package's `doc.go` starts with the generated header like every other file, so a header check or a linter counts it as generated; the package comment follows it
+
 ## v0.7.0 (2026-10-11)
 
 - the response is `<Name>Response`, no longer `<Name>OperationResponse`, and a model the importer invents for an answer the document declares inline is `<Name>Answer`, no longer `<Name>Response`: the wrapper every method returns gets the plain name, and the record inside it is named for the field it sits in. A caller renames by one replacement each (`OperationResponse` to `Response`; for TMDB and Dockhand, whose answers are nearly all inline, the 150 and 320 invented models by `<Op>Response` to `<Op>Answer`); Emby, Jellyfin and the *arr servers name their answers in their documents and keep every model name

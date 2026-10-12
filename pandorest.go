@@ -111,8 +111,10 @@ func Run(cfg Config, args []string, stdout, stderr io.Writer) error {
 	quiet := fs.Bool("quiet", false, "do not log each workaround and warning")
 	var oldDir, newDir *string
 	var exitCode, uncalled *bool
+	var callers *string
 	if cmd == cmdCheck {
-		uncalled = fs.Bool("uncalled", false, "list the generated methods no hand-written file in the repository names")
+		uncalled = fs.Bool("uncalled", false, "list the generated methods no hand-written file names")
+		callers = fs.String("callers", ".", "the directory whose hand-written files count as naming a method, relative to the root (default the whole repository)")
 	}
 	if cmd == cmdDiff {
 		oldDir = fs.String("old", "", "definitions directory to compare from (default: the checked-in definitions)")
@@ -161,7 +163,7 @@ func Run(cfg Config, args []string, stdout, stderr io.Writer) error {
 			if uncalled != nil && *uncalled {
 				listing = stdout
 			}
-			if err := runOne(cmd, svc, cfg, log, stdout, &changed, listing); err != nil {
+			if err := runOne(cmd, svc, cfg, log, stdout, &changed, listing, callers); err != nil {
 				return err
 			}
 		}
@@ -175,7 +177,7 @@ func Run(cfg Config, args []string, stdout, stderr io.Writer) error {
 
 // runOne runs one command on one service, resolved to one version.
 // listing is where check lists the methods no hand-written file names: stdout when asked, else nowhere.
-func runOne(cmd string, svc config.Service, cfg Config, log func(string), stdout io.Writer, changed *bool, listing io.Writer) error {
+func runOne(cmd string, svc config.Service, cfg Config, log func(string), stdout io.Writer, changed *bool, listing io.Writer, callers *string) error {
 	var err error
 	switch cmd {
 	case cmdImport:
@@ -187,7 +189,7 @@ func runOne(cmd string, svc config.Service, cfg Config, log func(string), stdout
 		differs, err = diffService(svc, cfg.Workarounds, log, stdout)
 		*changed = *changed || differs
 	case cmdCheck:
-		err = checkService(svc, cfg.Workarounds, log, stdout, listing)
+		err = checkService(svc, cfg.Workarounds, log, stdout, listing, *callers)
 	case cmdResolve:
 		_, _ = fmt.Fprintf(stdout, "%s\t%s\t%s\t%s\n", svc.Name, svc.Version, svc.Spec, svc.Definitions)
 	default:
@@ -281,7 +283,7 @@ func diffDirs(oldDir, newDir string, stdout io.Writer) (bool, error) {
 	return !report.Empty(), nil
 }
 
-func checkService(svc config.Service, all []workarounds.Workaround, log func(string), stdout, listing io.Writer) error {
+func checkService(svc config.Service, all []workarounds.Workaround, log func(string), stdout, listing io.Writer, callers string) error {
 	checkedIn, err := definitions.Load(svc.Path(svc.Definitions))
 	if err != nil {
 		return err
@@ -300,11 +302,15 @@ func checkService(svc config.Service, all []workarounds.Workaround, log func(str
 	_, _ = fmt.Fprintf(stdout, "%s: %d operations, every one has a method in %s\n", svc.Name, n, svc.Path(svc.Output))
 
 	// what the repository's own code reaches, for a reader deciding what the live tests have not proven
-	uncalled, total, err := generator.Uncalled(checkedIn, svc.Path("."), svc.Path(svc.Output))
+	uncalled, total, err := generator.Uncalled(checkedIn, svc.Path(callers), svc.Path(svc.Output))
 	if err != nil {
 		return err
 	}
-	_, _ = fmt.Fprintf(stdout, "%s: %d of %d methods are named by a hand-written file in the repository\n", svc.Name, total-len(uncalled), total)
+	where := "in the repository"
+	if callers != "." {
+		where = "under " + callers
+	}
+	_, _ = fmt.Fprintf(stdout, "%s: %d of %d methods are named by a hand-written file %s\n", svc.Name, total-len(uncalled), total, where)
 	if len(uncalled) > 0 {
 		_, _ = fmt.Fprintf(listing, "  never named: %s\n", strings.Join(uncalled, ", "))
 	}

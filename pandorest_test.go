@@ -171,9 +171,9 @@ func TestImportGenerateCheck(t *testing.T) {
 		t.Errorf("generate reported:\n%s", stdout)
 	}
 	mini := listFiles(t, filepath.Join(root, "sdk", "mini"))
-	// every file is known as generated; all carry the header but doc.go, whose package comment a linter must be able to see
+	// every file is known as generated and carries the header, doc.go included, whose package comment follows it
 	for name, src := range mini {
-		if !generator.Generated([]byte(src)) || strings.HasPrefix(src, generator.Header) == (name == "doc.go") {
+		if !generator.Generated([]byte(src)) || !strings.HasPrefix(src, generator.Header) || (name == "doc.go" && !strings.Contains(src, "\n\n// Package mini is")) {
 			t.Errorf("%s is not marked as a generated file should be:\n%s", name, strings.SplitN(src, "\n", 2)[0])
 		}
 	}
@@ -185,10 +185,10 @@ func TestImportGenerateCheck(t *testing.T) {
 		t.Errorf("mini's doc.go lacks its source or its notes:\n%s", doc)
 	}
 	other := listFiles(t, filepath.Join(root, "lib", "other"))
-	if src := other["client.go"]; !strings.Contains(src, `"`+config.DefaultClient+`"`) || !strings.Contains(src, "c, err := service.New(baseURL, client.APIKey(token), opts...)") {
+	if src := other["client.go"]; !strings.Contains(src, `"`+config.DefaultClient+`"`) || !strings.Contains(src, "c, err := service.New(baseURL, client.APIKey(token), append(opts[:len(opts):len(opts)], client.WithSecrets(token))...)") {
 		t.Errorf("other's client.go is not built on pandorest's client, with its auth, the service's way:\n%s", src)
 	}
-	if src := mini["client.go"]; !strings.Contains(src, "c, err := client.New(baseURL, client.Token(token), opts...)") {
+	if src := mini["client.go"]; !strings.Contains(src, "c, err := client.New(baseURL, client.Token(token), append(opts[:len(opts):len(opts)], client.WithSecrets(token))...)") {
 		t.Errorf("mini's client.go is not built on its own base client:\n%s", src)
 	}
 	if _, ok := other["things_method_deletethingsbyid.go"]; !ok {
@@ -209,6 +209,17 @@ func TestImportGenerateCheck(t *testing.T) {
 	stdout, _, err = runCmd(t, "check", "-root", root, "-quiet", "-uncalled")
 	if err != nil || !strings.Contains(stdout, "mini: 1 of 4 methods are named by a hand-written file in the repository\n  never named: GetItem, GetItemsComplete, GetItemsEach\n") || !strings.Contains(stdout, "other: 0 of 1 methods are named") {
 		t.Errorf("check -uncalled = %v:\n%s", err, stdout)
+	}
+	// -callers limits the count to one directory, so the SDK's own suite does not count as a tool wrapping a method
+	if err := os.MkdirAll(filepath.Join(root, "tools"), 0o750); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "tools", "wrap.go"), []byte("package tools\n\nfunc wrap(c interface{ GetItem() }) { c.GetItem() }\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	stdout, _, err = runCmd(t, "check", "-root", root, "-quiet", "-callers", "tools")
+	if err != nil || !strings.Contains(stdout, "mini: 1 of 4 methods are named by a hand-written file under tools\n") {
+		t.Errorf("check -callers = %v:\n%s", err, stdout)
 	}
 	stdout, stderr, err = runCmd(t, "diff", "-root", root, "-quiet", "-exit-code")
 	if err != nil || stdout != "mini: no changes\nother: no changes\n" || stderr != "" {

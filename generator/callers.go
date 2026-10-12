@@ -61,7 +61,7 @@ func selectorNames(root string, skip []string) (map[string]bool, error) {
 		if err != nil {
 			return err
 		}
-		if generatedRe.Match(src) || docRe.Match(src) {
+		if Generated(src) {
 			return nil
 		}
 		f, err := parser.ParseFile(fset, path, src, parser.SkipObjectResolution)

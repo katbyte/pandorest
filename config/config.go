@@ -198,8 +198,10 @@ type Service struct {
 	// the packages generated code uses (errors, fmt, strings, strconv,
 	// net/http, net/url, io, encoding/json, context, slices), so a source
 	// that needs another does not compile. The generated tests hold New to
-	// refusing an empty token and an address with no scheme, and to leaving
-	// the slash off the end of the address it keeps.
+	// refusing an empty token and an address with no scheme, to leaving
+	// the slash off the end of the address it keeps, and to naming the
+	// credential a secret, client.WithSecrets(token) among the options it
+	// passes on, so that no error repeats it.
 	Client string
 	// Grouped lays the SDK out as packages, the way go-azure-sdk lays out a
 	// service: the package at Output holds every model, enum, options and

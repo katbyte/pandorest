@@ -8,6 +8,9 @@ import (
 	"slices"
 	"strings"
 	"time"
+
+	"github.com/katbyte/pandorest/client"
+	"github.com/katbyte/pandorest/definitions"
 )
 
 // maxNamed is how many places or values a coverage note names before it says how many more there are.
@@ -298,4 +301,50 @@ func (r *Report) add(out Outcome) {
 	default:
 		r.Answered++
 	}
+}
+
+// NeverCalled is what a live run left unreached: the operations none of the
+// calls recorded (client.WithCalls) went to, by method and path template,
+// each of which must be excused by name with a reason, and the excuses that
+// name no operation. Every line is a problem for the run to fail on; none
+// is a run that reached everything it did not excuse. A call's path may
+// carry a base path before the template's segments.
+func NeverCalled(defs *definitions.Service, calls []client.Call, excused map[string]string) []string {
+	var problems []string
+	names := map[string]bool{}
+	for _, op := range defs.Operations() {
+		names[op.Name] = true
+		if excused[op.Name] != "" {
+			continue
+		}
+		if !slices.ContainsFunc(calls, func(c client.Call) bool { return c.Method == op.Method && pathMatches(op.Path, c.Path) }) {
+			problems = append(problems, fmt.Sprintf("%s (%s) was never called, and is not excused", op.Name, op.Key()))
+		}
+	}
+	for _, name := range slices.Sorted(maps.Keys(excused)) {
+		if !names[name] {
+			problems = append(problems, fmt.Sprintf("the excuse for %s names no operation", name))
+		}
+	}
+
+	return problems
+}
+
+// pathMatches reports whether a path a request went to is the template's,
+// its placeholders standing for one segment each, with any base path before.
+func pathMatches(template, path string) bool {
+	want := strings.Split(strings.Trim(template, "/"), "/")
+	got := strings.Split(strings.Trim(path, "/"), "/")
+	if len(got) < len(want) {
+		return false
+	}
+	got = got[len(got)-len(want):]
+	for i, w := range want {
+		placeholder := strings.HasPrefix(w, "{") && strings.HasSuffix(w, "}")
+		if !placeholder && w != got[i] {
+			return false
+		}
+	}
+
+	return true
 }

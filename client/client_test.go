@@ -869,3 +869,67 @@ func (c *closing) Close() error { c.closed = true; return nil }
 type failing struct{}
 
 func (failing) Write([]byte) (int, error) { return 0, errors.New("disk full") }
+
+// Every request sent is recorded when asked, answered or not.
+func TestCalls(t *testing.T) {
+	t.Parallel()
+
+	var calls client.Calls
+	c, _ := serve(t, arr, client.APIKey("k"), answer(http.StatusOK, `{}`), client.WithCalls(&calls))
+	if _, err := execute(t, c, get("/api/v3/items")); err != nil {
+		t.Fatal(err)
+	}
+	_, _ = execute(t, c, get("/api/v3/gone"))
+	if got := calls.Seen(); len(got) != 2 || got[0] != (client.Call{Method: http.MethodGet, Path: "/api/v3/items"}) || got[1].Path != "/api/v3/gone" {
+		t.Errorf("Seen = %+v", got)
+	}
+}
+
+// A secret the authorizer holds, or one named, is never repeated by an error: not in a status error's body or messages, not in the
+// path of a refused request, not in a decode failure's preview.
+func TestSecrets(t *testing.T) {
+	t.Parallel()
+
+	c, _ := serve(t, arr, client.APIKey("key-one"), answer(http.StatusForbidden, `{"message": "key-one and pass-two are not allowed"}`), client.WithSecrets("pass-two"))
+	_, err := execute(t, c, get("/api/v3/items/key-one"))
+	if err == nil || strings.Contains(err.Error(), "key-one") || strings.Contains(err.Error(), "pass-two") || !strings.Contains(err.Error(), "***") || !client.IsForbidden(err) {
+		t.Errorf("a refusal = %v", err)
+	}
+	for _, m := range client.Messages(err) {
+		if strings.Contains(m, "key-one") {
+			t.Errorf("a message repeats the key: %q", m)
+		}
+	}
+
+	c, _ = serve(t, arr, client.Bearer("token-two"), answer(http.StatusOK, `not json token-two`))
+	resp, err := execute(t, c, get("/api/v3/items"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var into map[string]any
+	if err := resp.Unmarshal(&into); err == nil || strings.Contains(err.Error(), "token-two") {
+		t.Errorf("a decode failure = %v", err)
+	}
+}
+
+// A service that says in the body whether a call worked has the failing values returned as an OutcomeError under a 200, with the
+// server's own words and the service's; any other value, and an answer with no outcome, are answers.
+func TestOutcome(t *testing.T) {
+	t.Parallel()
+
+	svc := client.Service{Name: "Dns", Outcome: &client.Outcome{Field: "status", Failures: map[string]string{"error": "the server refused the call", "invalid-token": "the token is not known"}, Message: "errorMessage"}}
+	c, _ := serve(t, svc, client.Bearer("secret-1"), answer(http.StatusOK, `{"status": "invalid-token", "errorMessage": "token secret-1 expired"}`))
+	resp, err := execute(t, c, get("/api/zones"))
+	if resp == nil || client.OutcomeValue(err) != "invalid-token" || err.Error() != `GET /api/zones: the server answered invalid-token "the token is not known": token *** expired` {
+		t.Errorf("a refused outcome = %v", err)
+	}
+	for _, body := range []string{`{"status": "ok", "response": {}}`, `{"other": 1}`, `[1, 2]`} {
+		c, _ := serve(t, svc, client.Bearer("t"), answer(http.StatusOK, body))
+		if _, err := execute(t, c, get("/api/zones")); err != nil {
+			t.Errorf("%s: %v", body, err)
+		}
+	}
+	if client.OutcomeValue(errors.New("other")) != "" {
+		t.Error("another error has an outcome")
+	}
+}

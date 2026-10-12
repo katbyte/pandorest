@@ -6,6 +6,9 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/katbyte/pandorest/client"
+	"github.com/katbyte/pandorest/definitions"
 )
 
 type state string
@@ -79,5 +82,27 @@ func TestCoverageWording(t *testing.T) {
 	}
 	if got := r.Summary("mini"); got != "mini: 5 GET operations: 1 answered, 1 answered nothing by their Empty case, 1 refused as their case says, 1 skipped, 1 failed" {
 		t.Errorf("Summary = %q", got)
+	}
+}
+
+// An operation none of the recorded calls reached is a problem unless excused, an excuse naming no operation is one too, and a
+// call's path matches its template through placeholders and under a base path.
+func TestNeverCalled(t *testing.T) {
+	t.Parallel()
+
+	defs := &definitions.Service{Name: "mini", Groups: []definitions.Group{{Name: "Items", Operations: []definitions.Operation{
+		{Name: "GetItems", Method: "GET", Path: "/api/v3/items"},
+		{Name: "GetItem", Method: "GET", Path: "/api/v3/items/{id}"},
+		{Name: "DeleteItem", Method: "DELETE", Path: "/api/v3/items/{id}"},
+		{Name: "GetTags", Method: "GET", Path: "/api/v3/tags"},
+	}}}}
+	calls := []client.Call{{Method: "GET", Path: "/sonarr/api/v3/items"}, {Method: "GET", Path: "/api/v3/items/12"}, {Method: "GET", Path: "/api/v3/tags/1"}}
+	got := NeverCalled(defs, calls, map[string]string{"GetTags": "needs a tag", "GetGone": "no such thing"})
+	want := []string{"DeleteItem (DELETE /api/v3/items/{id}) was never called, and is not excused", "the excuse for GetGone names no operation"}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("NeverCalled = %q, want %q", got, want)
+	}
+	if got := NeverCalled(defs, calls, map[string]string{"GetTags": "needs a tag", "DeleteItem": "never in a read suite"}); len(got) != 0 {
+		t.Errorf("a run that reached or excused everything = %q", got)
 	}
 }

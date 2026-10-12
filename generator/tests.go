@@ -219,6 +219,16 @@ const newTest = `func TestNew(t *testing.T) {
 	if err != nil || c.Client.BaseURL != "http://server" {
 		t.Errorf("New = %+v, %v", c, err)
 	}
+
+	// a refusal that echoes the credential does not repeat it
+	c, _ = newOperationServer(t, 401, "application/json", ` + "`" + `{"message": "the key test-token is not known"}` + "`" + `)
+	req, err := c.Client.NewRequest(t.Context(), client.RequestOptions{HTTPMethod: http.MethodGet, Path: "/x", ExpectedStatusCodes: []int{http.StatusOK}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := req.Execute(t.Context()); err == nil || strings.Contains(err.Error(), "test-token") || !strings.Contains(err.Error(), "***") {
+		t.Errorf("a refusal repeats the credential: %v", err)
+	}
 }
 `
 
