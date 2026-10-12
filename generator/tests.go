@@ -634,8 +634,8 @@ func (g *gen) responseChecks(o *definitions.Operation, call testCallInfo) string
 			"\tc, _ = newOperationServer(t, " + strconv.Itoa(o.ExpectedStatusCodes[0]) + ", " + strconv.Quote(concreteType(o.Response.ContentType)) + ", \"file bytes\")\n\tresult, err = " + call.expr + "\n\tif err != nil {\n\t\tt.Fatal(err)\n\t}\n" +
 			"\tvar streamed bytes.Buffer\n\tif _, err := result.WriteTo(&streamed); err != nil || streamed.String() != \"file bytes\" {\n\t\tt.Errorf(\"WriteTo = %v, %q\", err, streamed.String())\n\t}\n" +
 			"\tif _, err := result.WriteTo(&streamed); err == nil {\n\t\tt.Error(\"WriteTo on a spent body succeeded\")\n\t}\n" +
-			"\tif _, err := (" + g.typeName(o.Name+"OperationResponse") + "{}).WriteTo(&streamed); err == nil {\n\t\tt.Error(\"WriteTo with no answer succeeded\")\n\t}\n" +
-			"\tif body, contentType := (" + g.typeName(o.Name+"OperationResponse") + "{}).Reader(); body == nil || contentType != \"\" || body.Close() != nil {\n\t\tt.Error(\"Reader with no answer is not safely empty\")\n\t}\n"
+			"\tif _, err := (" + g.typeName(o.Name+"Response") + "{}).WriteTo(&streamed); err == nil {\n\t\tt.Error(\"WriteTo with no answer succeeded\")\n\t}\n" +
+			"\tif body, contentType := (" + g.typeName(o.Name+"Response") + "{}).Reader(); body == nil || contentType != \"\" || body.Close() != nil {\n\t\tt.Error(\"Reader with no answer is not safely empty\")\n\t}\n"
 	}
 	typ, pointer := g.responseModel(o)
 	switch {

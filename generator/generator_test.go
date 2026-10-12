@@ -262,7 +262,7 @@ func TestGrouped(t *testing.T) {
 
 	// the types package names everything a caller spells, with the base client's helpers under its own name
 	root := read(t, dir, "operation_getitems.go") + read(t, dir, "helpers.go") + read(t, dir, "client.go")
-	for _, want := range []string{"type GetItemsOptions struct {", "type GetItemsOperationResponse struct {", "type GetItemsCompleteResult struct {", "type Option = client.Option", "func IsNotFound(err error) bool { return client.IsNotFound(err) }", "func New(baseURL, token string, opts ...client.Option) (*client.Client, error) {", "return service.New(baseURL, client.Bearer(token), opts...)"} {
+	for _, want := range []string{"type GetItemsOptions struct {", "type GetItemsResponse struct {", "type GetItemsCompleteResult struct {", "type Option = client.Option", "func IsNotFound(err error) bool { return client.IsNotFound(err) }", "func New(baseURL, token string, opts ...client.Option) (*client.Client, error) {", "return service.New(baseURL, client.Bearer(token), opts...)"} {
 		if !strings.Contains(root, want) {
 			t.Errorf("the types package lacks %q", want)
 		}
@@ -270,7 +270,7 @@ func TestGrouped(t *testing.T) {
 
 	// a tag's package has the method, naming the types as the root's, and nothing a caller names
 	method := read(t, dir, "items/method_getitems.go")
-	for _, want := range []string{"package items", `"github.com/katbyte/pandorest/generator/testdata/mini"`, "func (c Client) GetItems(ctx context.Context, options ...mini.GetItemsOptions) (result mini.GetItemsOperationResponse, err error) {", "func (c Client) GetItemsComplete(", "var answer mini.QueryResult"} {
+	for _, want := range []string{"package items", `"github.com/katbyte/pandorest/generator/testdata/mini"`, "func (c Client) GetItems(ctx context.Context, options ...mini.GetItemsOptions) (result mini.GetItemsResponse, err error) {", "func (c Client) GetItemsComplete(", "var answer mini.QueryResult"} {
 		if !strings.Contains(method, want) {
 			t.Errorf("items' method file lacks %q:\n%s", want, method)
 		}
@@ -355,13 +355,13 @@ func TestGenerate(t *testing.T) {
 			return out
 		}(), "\n")
 		for _, want := range []string{
-			"func (c Client) GetItems(ctx context.Context, options ...GetItemsOptions) (result GetItemsOperationResponse, err error) {",
+			"func (c Client) GetItems(ctx context.Context, options ...GetItemsOptions) (result GetItemsResponse, err error) {",
 			"func (c Client) GetItemsComplete(ctx context.Context, options ...GetItemsOptions) (result GetItemsCompleteResult, err error) {",
-			"func (c Client) GetItem(ctx context.Context, itemId string) (result GetItemOperationResponse, err error) {",
-			"func (c Client) UpdateItem(ctx context.Context, itemId string, input Item) (result UpdateItemOperationResponse, err error) {",
-			"func (c Client) GetItemImage(ctx context.Context, itemId string, imageType Kind, index int) (result GetItemImageOperationResponse, err error) {",
-			"func (c Client) SetItemImage(ctx context.Context, itemId string, imageType Kind, index int, input io.Reader, contentType string) (result SetItemImageOperationResponse, err error) {",
-			"func (c Client) PutSync(ctx context.Context, jobId int64, ratio float64, input []Item) (result PutSyncOperationResponse, err error) {",
+			"func (c Client) GetItem(ctx context.Context, itemId string) (result GetItemResponse, err error) {",
+			"func (c Client) UpdateItem(ctx context.Context, itemId string, input Item) (result UpdateItemResponse, err error) {",
+			"func (c Client) GetItemImage(ctx context.Context, itemId string, imageType Kind, index int) (result GetItemImageResponse, err error) {",
+			"func (c Client) SetItemImage(ctx context.Context, itemId string, imageType Kind, index int, input io.Reader, contentType string) (result SetItemImageResponse, err error) {",
+			"func (c Client) PutSync(ctx context.Context, jobId int64, ratio float64, input []Item) (result PutSyncResponse, err error) {",
 			`fmt.Sprintf("/Items/%s/Images/%s/%d", url.PathEscape(itemId), url.PathEscape(string(imageType)), index),`,
 			`fmt.Sprintf("/Sync/%d/%s", jobId, strconv.FormatFloat(ratio, 'f', -1, 64))`,
 			"StreamResponse: true,",
@@ -723,7 +723,7 @@ func TestInlineSingleOptions(t *testing.T) {
 	goTool(t, dir, "test")
 
 	for file, wants := range map[string][]string{
-		"items_method_getlookup.go": {"func (c Client) GetLookup(ctx context.Context, term ...string) (result GetLookupOperationResponse, err error) {", `err = fmt.Errorf("GetLookup takes one term at most, not %d", len(term))`, "option.Term = term[0]", "OptionsObject: option,"},
+		"items_method_getlookup.go": {"func (c Client) GetLookup(ctx context.Context, term ...string) (result GetLookupResponse, err error) {", `err = fmt.Errorf("GetLookup takes one term at most, not %d", len(term))`, "option.Term = term[0]", "OptionsObject: option,"},
 		"items_method_postforce.go": {"func (c Client) PostForce(ctx context.Context, forceSave ...bool) (", "option.ForceSave = &forceSave[0]"},
 		"items_method_getseason.go": {"func (c Client) GetSeason(ctx context.Context, seasonNumber int) (", "option.SeasonNumber = &seasonNumber\n"},
 		"items_method_getbyids.go":  {"func (c Client) GetByIds(ctx context.Context, ids ...string) (", "if len(ids) > 0 {\n\t\toption.Ids = ids\n\t}"},
@@ -955,7 +955,7 @@ func TestUnixDates(t *testing.T) {
 		"events_model_event.go":           {"Timestamp Unix      `json:\"timestamp,omitzero\"`", "At        UnixMilli `json:\"at,omitzero\"`", "Count     int       `json:\"count,omitempty\"`"},
 		"events_method_getevents.go":      {"Since Unix", "if !o.Since.IsZero() {\n\t\tout.Append(\"since\", o.Since.String())"},
 		"events_method_geteventat.go":     {"func (c Client) GetEventAt(ctx context.Context, at UnixMilli) (", "at.String())"},
-		"events_method_geteventstream.go": {"func (r GetEventStreamOperationResponse) Reader() (io.ReadCloser, string) {", "func (r GetEventStreamOperationResponse) ContentLength() int64 {"},
+		"events_method_geteventstream.go": {"func (r GetEventStreamResponse) Reader() (io.ReadCloser, string) {", "func (r GetEventStreamResponse) ContentLength() int64 {"},
 	} {
 		src := read(t, dir, file)
 		for _, want := range wants {

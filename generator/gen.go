@@ -633,25 +633,46 @@ func (g *gen) docFile() string {
 // A method takes a context, then the path parameters in path order, then the
 // request body (input: the model for a JSON body, or an io.Reader and its
 // content type for raw bytes), then, when the operation has query or header
-// parameters, a <Name>Options. Unset options are not sent: a
-// boolean or a number is a pointer, sent when set (so 0 and false can be
-// asked for), an empty string or list is skipped, and a list is sent
-// comma-joined or as one parameter for each element, as the document says.
+// parameters, a <Name>Options, which may be left out when every one of them
+// is optional`)
+	if g.opts.InlineSingleOptions {
+		b.WriteString(`, and which an operation with one parameter takes as the
+// parameter itself, variadic when optional`)
+	}
+	b.WriteString(`.
+// Unset options are not sent: a boolean or a number is a pointer, sent when
+// set (so 0 and false can be asked for), an empty string or list is skipped,
+// and a list is sent comma-joined or as one parameter for each element, as
+// the document says.
 //
-// It returns a <Name>OperationResponse holding HttpResponse and, when the
-// operation answers JSON, Model. HttpResponse is set whenever the server
-// answered, including alongside an error, and its body can be read again. An
-// operation that answers a file leaves the body unread in
-// HttpResponse.Body for the caller to read and close. A status the operation
-// does not document is an error, and client.StatusCode reads the status from
-// it.
+// It returns a <Name>Response holding HttpResponse and, when the operation
+// answers JSON, Answer: a pointer for a struct, enum or primitive, nil when
+// the server answered with no body, and the value for a list, map or raw
+// JSON. Answered() says whether a body came and was decoded. A struct answer
+// is also embedded, so res.Answer.Name may be read as res.Name, a zero record
+// when nothing was answered, and Record() hands it back by value with an
+// error when none came. HttpResponse is set whenever the server answered,
+// including alongside an error. An operation that answers a file has no
+// Answer: WriteTo(w) copies the file out and closes the body, Bytes(max)
+// reads it whole up to a size, Reader() hands the body over with its content
+// type, ContentLength() and Filename() say what the server said of it, and
+// the body is also still in HttpResponse.Body. A status the operation does
+// not document is an error: client.StatusCode reads the status from it, and
+// IsNotFound and the other Is helpers say which it is.
 `)
 	if g.paged != nil {
 		pages := g.paged.Pageable.StartIndexOption
 		if g.paged.Pageable.LimitOption != "" {
 			pages += " and " + g.paged.Pageable.LimitOption
 		}
-		fmt.Fprintf(&b, "//\n// A list operation, one whose options page with %s, also has a\n// <Name>Complete method that pages through every result.\n", pages)
+		fmt.Fprintf(&b, "//\n// A list operation, one whose options page with %s, also has a\n// <Name>Complete method that loads every result, and a <Name>Each that\n// hands them out one at a time as a range, so a loop that stops asks for no\n// page more.\n", pages)
+	}
+	if len(g.svc.IDs) > 0 {
+		names := make([]string, 0, len(g.svc.IDs))
+		for _, k := range g.svc.IDs {
+			names = append(names, k.Name)
+		}
+		fmt.Fprintf(&b, "//\n// # Ids\n//\n// %s are kinds of id the package tells apart, each a bare named type over\n// the int or string the document declares, so that one kind where another goes\n// does not compile. Where an id sits among the options it is held by value and\n// sent when not zero. int(id) and SeriesID(n) convert one value, client.IDs and\n// client.StringIDs a list.\n", strings.Join(names, ", "))
 	}
 	if notes := comment("", g.opts.Notes); notes != "" {
 		b.WriteString("//\n")

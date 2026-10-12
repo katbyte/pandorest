@@ -375,7 +375,7 @@ func (im *importer) responseType(s *openapi.Schema, owner string) definitions.Ty
 		}
 	}
 
-	return im.typeRef(s, owner, "Response")
+	return im.typeRef(s, owner, "Answer")
 }
 
 // expectedStatusCodes are the statuses the generated method treats as an

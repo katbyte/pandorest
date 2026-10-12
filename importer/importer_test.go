@@ -344,12 +344,12 @@ func TestImportFailures(t *testing.T) {
 			// the component is declared first (schemas come before
 			// operations), so the operation's own inline response must not
 			// quietly become the component's shape
-			name: "component named like an operation's inline response",
+			name: "component named like an operation's inline answer",
 			patch: func(s *openapi.Spec) {
-				s.Components.Schemas["GetItemResponse"] = &openapi.Schema{Type: "object", Properties: map[string]*openapi.Schema{"Other": {Type: "string"}}}
+				s.Components.Schemas["GetItemAnswer"] = &openapi.Schema{Type: "object", Properties: map[string]*openapi.Schema{"Other": {Type: "string"}}}
 				s.Operation("GET", "/Items/{itemId}").Responses["200"].Content["application/json"].Schema = &openapi.Schema{Type: "object", Properties: map[string]*openapi.Schema{"Id": {Type: "string"}}}
 			},
-			want: "type GetItemResponse is declared by both",
+			want: "type GetItemAnswer is declared by both",
 		},
 	}
 	for _, tt := range tests {
@@ -402,7 +402,7 @@ func TestInlineShapes(t *testing.T) {
 		t.Fatalf("operations = %v", ops)
 	}
 	// named after the method, not the path (GetN3MovieByMovieId...)
-	if details.Response.Type.ReferenceName != "MovieDetailsResponse" || rating.Request.Type.ReferenceName != "MovieAddRatingRequest" {
+	if details.Response.Type.ReferenceName != "MovieDetailsAnswer" || rating.Request.Type.ReferenceName != "MovieAddRatingRequest" {
 		t.Errorf("response %+v, request %+v", details.Response.Type, rating.Request.Type)
 	}
 	if len(rating.Options) != 0 {
@@ -410,8 +410,8 @@ func TestInlineShapes(t *testing.T) {
 	}
 
 	models := svc.Models()
-	fields := make([]string, 0, len(models["MovieDetailsResponse"].Fields))
-	for _, f := range models["MovieDetailsResponse"].Fields {
+	fields := make([]string, 0, len(models["MovieDetailsAnswer"].Fields))
+	for _, f := range models["MovieDetailsAnswer"].Fields {
 		fields = append(fields, f.Name+"="+f.JSONName+":"+string(f.Type.Type))
 	}
 	slices.Sort(fields)
@@ -1074,7 +1074,7 @@ func TestNameClash(t *testing.T) {
 		t.Fatal(err)
 	}
 	page := find(svc.Operations(), func(o *definitions.Operation) bool { return o.Key() == "GET /history" })
-	if page == nil || (*page).Name != "GetHistoryPage" || (*page).Response.Type.String() != "Reference(GetHistoryPageResponse)" {
+	if page == nil || (*page).Name != "GetHistoryPage" || (*page).Response.Type.String() != "Reference(GetHistoryPageAnswer)" {
 		t.Errorf("the named operation = %+v", page)
 	}
 	if list := find(svc.Operations(), func(o *definitions.Operation) bool { return o.Key() == "GET /api/v3/history" }); list == nil || (*list).Name != "GetHistory" {
@@ -1157,8 +1157,8 @@ func TestPagingShapes(t *testing.T) {
 		t.Error("an answer with two lists, or without a total, was marked a list")
 	}
 	for _, want := range []string{
-		"mixed: warning: GET /scan takes a paging parameter and gets no Complete method: it takes offset but its answer GetScanResponse has 2 lists, so Items must name one",
-		"mixed: warning: GET /changes takes a paging parameter and gets no Complete method: it takes page but its answer GetChangesResponse has no list results",
+		"mixed: warning: GET /scan takes a paging parameter and gets no Complete method: it takes offset but its answer GetScanAnswer has 2 lists, so Items must name one",
+		"mixed: warning: GET /changes takes a paging parameter and gets no Complete method: it takes page but its answer GetChangesAnswer has no list results",
 	} {
 		if !slices.Contains(logged, want) {
 			t.Errorf("the log lacks %q:\n%s", want, strings.Join(logged, "\n"))
@@ -1203,7 +1203,7 @@ func TestIDs(t *testing.T) {
 		{Name: "EpisodeID", Of: []string{"EpisodeResource"}, Names: []string{"episodeIds"}},
 		{Name: "TagID", Of: []string{"TagResource"}, Names: []string{"tags"}},
 		{Name: "TvdbID", Base: "int", Names: []string{"tvdbId"}, Except: []string{"GET /series tvdbId"}},
-	}, Plain: []string{"downloadId", "GetCommandByIdResponse .id"}}
+	}, Plain: []string{"downloadId", "GetCommandByIdAnswer .id"}}
 	svc, err := FromSpec(cfg, spec, nil, func(msg string) { logged = append(logged, msg) })
 	if err != nil {
 		t.Fatal(err)
@@ -1256,7 +1256,7 @@ func TestIDs(t *testing.T) {
 	if len(svc.IDs) != 4 || svc.IDs[0] != (definitions.IDKind{Name: "SeriesID", Base: definitions.Integer}) || svc.IDs[3].Base != definitions.Integer {
 		t.Errorf("kinds = %+v", svc.IDs)
 	}
-	for _, want := range []string{"arr: ids: SeriesID in 9 places (5 from Of, 3 by name, 1 by In)", "arr: ids: TvdbID in 1 place (0 from Of, 1 by name, 0 by In)", "arr: the bare id of 1 place is left plain (those named like a kind's model first): GetCommandByIdResponse", "arr: 2 names look like ids and have no kind (give each a kind in IDs, or leave it in Plain): episodeFileId in EpisodeResource; id in GET /command/{id}"} {
+	for _, want := range []string{"arr: ids: SeriesID in 9 places (5 from Of, 3 by name, 1 by In)", "arr: ids: TvdbID in 1 place (0 from Of, 1 by name, 0 by In)", "arr: the bare id of 1 place is left plain (those named like a kind's model first): GetCommandByIdAnswer", "arr: 2 names look like ids and have no kind (give each a kind in IDs, or leave it in Plain): episodeFileId in EpisodeResource; id in GET /command/{id}"} {
 		if !slices.ContainsFunc(logged, func(l string) bool { return strings.HasPrefix(l, want) }) {
 			t.Errorf("the log lacks %q:\n%s", want, strings.Join(logged, "\n"))
 		}
@@ -1270,7 +1270,7 @@ func TestIDs(t *testing.T) {
 	}{
 		"a kind reaching nothing":          {ids: []config.ID{{Name: "GhostID", Base: "int", Names: []string{"ghostId"}}}, want: "the id kind GhostID reaches no field, option or path parameter"},
 		"a model that is not there":        {ids: []config.ID{{Name: "GhostID", Of: []string{"Ghost"}}}, want: "GhostID: Of names Ghost, which is not a model of the document"},
-		"a model with no id":               {ids: []config.ID{{Name: "GhostID", Of: []string{"GetCommandByIdResponse"}, Names: []string{"seriesId"}}}, want: ""},
+		"a model with no id":               {ids: []config.ID{{Name: "GhostID", Of: []string{"GetCommandByIdAnswer"}, Names: []string{"seriesId"}}}, want: ""},
 		"two kinds on one place":           {ids: []config.ID{{Name: "SeriesID", Of: []string{"SeriesResource"}}, {Name: "OtherID", Base: "int", Names: []string{"id"}}}, want: "SeriesResource id is claimed by SeriesID and OtherID"},
 		"a name both typed and plain":      {ids: []config.ID{{Name: "SeriesID", Of: []string{"SeriesResource"}, Names: []string{"seriesId"}}}, plain: []string{"seriesId"}, want: "seriesId is both a name of SeriesID and in Plain"},
 		"an In the inference makes stale":  {ids: []config.ID{{Name: "SeriesID", Of: []string{"SeriesResource"}, In: []string{"GET /series/{id} id"}}}, want: `SeriesID: In "GET /series/{id} id" is not needed, Of or Names type it, so remove it`},

@@ -16,7 +16,7 @@ import (
 // methodFile renders one operation: its response struct, its options struct
 // when it has options, the method, and the Complete pager for a list.
 func (g *gen) methodFile(o *definitions.Operation) string {
-	responseType := o.Name + "OperationResponse"
+	responseType := o.Name + "Response"
 	optionsType := o.Name + "Options"
 	g.declare(responseType, "operation "+o.Name)
 
@@ -40,7 +40,7 @@ func (g *gen) methodFile(o *definitions.Operation) string {
 // caller names of one operation: its response struct, its options struct and
 // the result type of its pager.
 func (g *gen) operationFile(o *definitions.Operation) string {
-	responseType := o.Name + "OperationResponse"
+	responseType := o.Name + "Response"
 	optionsType := o.Name + "Options"
 	g.declare(responseType, "operation "+o.Name)
 
@@ -62,7 +62,7 @@ func (g *gen) operationFile(o *definitions.Operation) string {
 // types package's.
 func (g *gen) groupMethodFile(o *definitions.Operation) string {
 	var b strings.Builder
-	g.writeMethod(&b, o, g.typeName(o.Name+"OperationResponse"), g.typeName(o.Name+"Options"))
+	g.writeMethod(&b, o, g.typeName(o.Name+"Response"), g.typeName(o.Name+"Options"))
 	if o.Pageable != nil {
 		g.writeCompleteMethod(&b, o, g.typeName(o.Name+"Options"))
 		g.writeEachMethod(&b, o, g.typeName(o.Name+"Options"))
@@ -690,7 +690,7 @@ func (g *gen) writeCompleteMethod(b *strings.Builder, o *definitions.Operation, 
 	ov := g.optionsVar(o)
 	writePageSetup(b, p, ov, "\t")
 	b.WriteString("\tfor {\n")
-	fmt.Fprintf(b, "\t\tvar page %s\n", g.typeName(o.Name+"OperationResponse"))
+	fmt.Fprintf(b, "\t\tvar page %s\n", g.typeName(o.Name+"Response"))
 	fmt.Fprintf(b, "\t\tpage, err = c.%s(%s)\n", o.Name, strings.Join(append([]string{"ctx"}, call...), ", "))
 	b.WriteString("\t\tresult.LatestHttpResponse = page.HttpResponse\n")
 	b.WriteString("\t\tif err != nil {\n\t\t\terr = fmt.Errorf(\"loading results: %w\", err)\n\t\t\treturn\n\t\t}\n")

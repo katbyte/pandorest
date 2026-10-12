@@ -10,7 +10,7 @@
 //	client_test.go                     the canned server the tests share
 //	doc.go                             the package documentation
 //	<tag>_method_<operation>.go        one per operation: the method, its
-//	                                   <Name>OperationResponse, its
+//	                                   <Name>Response, its
 //	                                   <Name>Options, and for list
 //	                                   operations a <Name>Complete pager
 //	<tag>_method_<operation>_test.go   the operation's test (tests.go)
