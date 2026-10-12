@@ -190,6 +190,8 @@ type Outcome struct {
 	Failures []string
 	// Notes are what went as its case said it would.
 	Notes []string
+	// empty is an answer with nothing in it that its case allows, and refused a status or an undecodable body its case expects
+	empty, refused bool
 }
 
 func (o *Outcome) failf(format string, args ...any) {
@@ -209,6 +211,8 @@ func (s Sweep) Run(t *testing.T) {
 		t.Fatal("a sweep needs the service's definitions, its client and the base client's StatusCode")
 	}
 
+	var report Report
+	cov := newCoverage(s)
 	for _, op := range s.Definitions.Operations() {
 		if op.Method != http.MethodGet {
 			continue
@@ -218,7 +222,8 @@ func (s Sweep) Run(t *testing.T) {
 			ctx, cancel := context.WithTimeout(t.Context(), cmp.Or(s.Timeout, DefaultTimeout))
 			defer cancel()
 
-			out := s.Operation(ctx, op)
+			out := s.runOperation(ctx, op, cov)
+			report.add(out)
 			if out.Skipped != "" {
 				t.Skip(out.Skipped)
 			}
@@ -233,6 +238,13 @@ func (s Sweep) Run(t *testing.T) {
 
 	for _, name := range s.StaleCases() {
 		t.Errorf("the case for %s names no GET operation", name)
+	}
+
+	// what the run came to, and what its answers left unproven
+	report.Notes = cov.notes()
+	t.Log(report.Summary(s.Definitions.Name))
+	for _, note := range report.Notes {
+		t.Log(s.Definitions.Name + ": " + note)
 	}
 }
 
@@ -256,6 +268,11 @@ func (s Sweep) StaleCases() []string {
 
 // Operation calls one operation and holds its answer to its case.
 func (s Sweep) Operation(ctx context.Context, op *definitions.Operation) Outcome {
+	return s.runOperation(ctx, op, nil)
+}
+
+// runOperation is Operation noting what the answer carried in cov, when there is one.
+func (s Sweep) runOperation(ctx context.Context, op *definitions.Operation, cov *coverage) Outcome {
 	var out Outcome
 	c := s.Cases[op.Name]
 	if c.Skip != "" {
@@ -275,7 +292,7 @@ func (s Sweep) Operation(ctx context.Context, op *definitions.Operation) Outcome
 		return out
 	}
 
-	a, err := s.call(ctx, hangUp, op, args)
+	a, err := s.call(ctx, hangUp, op, args, cov)
 	expectsFailure := c.Status != 0 || c.Decode
 	switch {
 	case err == nil && expectsFailure && !c.Sometimes:
@@ -283,8 +300,10 @@ func (s Sweep) Operation(ctx context.Context, op *definitions.Operation) Outcome
 	case err == nil:
 		s.check(&out, op, c, a)
 	case c.Status != 0 && a.status == c.Status:
+		out.refused = true
 		out.notef("%s: HTTP %d, as expected: %s", op.Key(), a.status, c.Why)
 	case c.Decode && a.undecoded:
+		out.refused = true
 		out.notef("%s: does not decode, as expected: %s", op.Key(), c.Why)
 	case a.undecoded:
 		out.failf("%s answers what its model cannot decode: %v", op.Key(), err)
@@ -629,7 +648,7 @@ func unreadDates(v reflect.Value, at string, found []string) []string {
 
 // call calls the operation, reads what it answered, and classifies a
 // failure. hangUp cancels ctx, the context the call was given.
-func (s Sweep) call(ctx context.Context, hangUp context.CancelFunc, op *definitions.Operation, args []reflect.Value) (answer, error) {
+func (s Sweep) call(ctx context.Context, hangUp context.CancelFunc, op *definitions.Operation, args []reflect.Value, cov *coverage) (answer, error) {
 	var a answer
 	results := s.method(op).Call(args)
 	if len(results) != 2 || results[0].Kind() != reflect.Struct {
@@ -672,7 +691,7 @@ func (s Sweep) call(ctx context.Context, hangUp context.CancelFunc, op *definiti
 		return a, nil
 	}
 
-	return judgeJSON(body, results[0].FieldByName("Answer")), nil
+	return judgeJSON(body, results[0].FieldByName("Answer"), cov), nil
 }
 
 func isEventStream(contentType string) bool {
@@ -734,6 +753,7 @@ func readEvent(r io.Reader) error {
 func (s Sweep) check(out *Outcome, op *definitions.Operation, c Case, a answer) {
 	switch {
 	case c.MayBeEmpty != "":
+		out.empty = a.empty
 		out.notef("%s: may answer with nothing (it did: %t): %s", op.Key(), a.empty, c.MayBeEmpty)
 	case a.empty && c.Empty == "" && a.stream:
 		out.failf("%s is an event stream that sent no event in %s, which proves only its status: point it at a fixture that sends one, or give it an Empty case", op.Key(), cmp.Or(s.EventWait, DefaultEventWait))
@@ -742,6 +762,7 @@ func (s Sweep) check(out *Outcome, op *definitions.Operation, c Case, a answer) 
 	case !a.empty && c.Empty != "":
 		out.failf("%s now answers with something; drop its Empty case (%s)", op.Key(), c.Empty)
 	case a.empty:
+		out.empty = true
 		out.notef("%s: answers with nothing, as expected: %s", op.Key(), c.Empty)
 	case a.stream:
 		out.notef("%s: an event stream, read as far as its first event and no further", op.Key())
@@ -762,7 +783,7 @@ func (s Sweep) check(out *Outcome, op *definitions.Operation, c Case, a answer) 
 }
 
 // judgeJSON reads a JSON answer against the model it was decoded into.
-func judgeJSON(body []byte, model reflect.Value) answer {
+func judgeJSON(body []byte, model reflect.Value, cov *coverage) answer {
 	var sent any
 	if err := json.Unmarshal(body, &sent); err != nil {
 		// text the model holds whole, or nothing at all
@@ -773,6 +794,7 @@ func judgeJSON(body []byte, model reflect.Value) answer {
 	if !model.IsValid() {
 		return a
 	}
+	cov.observe(sent, model)
 	a.dropped = dropped(sent, model, "the answer")
 	a.unread = unreadDates(model, "Answer", nil)
 	a.unknown = unknownValues(model, "Answer", "", nil)

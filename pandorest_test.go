@@ -201,6 +201,15 @@ func TestImportGenerateCheck(t *testing.T) {
 	if err != nil || !strings.Contains(stdout, "mini: 2 operations, every one has a method in "+filepath.Join(root, "sdk", "mini")) || !strings.Contains(stdout, "other: 1 operations, every one has a method in "+filepath.Join(root, "lib", "other")) {
 		t.Errorf("check = %v:\n%s", err, stdout)
 	}
+
+	// a hand-written file naming one method is counted, and -uncalled names the rest; the generated files and their tests are not hand-written
+	if err := os.WriteFile(filepath.Join(root, "tools.go"), []byte("package tools\n\nfunc use(c interface{ GetItems() }) { c.GetItems() }\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	stdout, _, err = runCmd(t, "check", "-root", root, "-quiet", "-uncalled")
+	if err != nil || !strings.Contains(stdout, "mini: 1 of 4 methods are named by a hand-written file in the repository\n  never named: GetItem, GetItemsComplete, GetItemsEach\n") || !strings.Contains(stdout, "other: 0 of 1 methods are named") {
+		t.Errorf("check -uncalled = %v:\n%s", err, stdout)
+	}
 	stdout, stderr, err = runCmd(t, "diff", "-root", root, "-quiet", "-exit-code")
 	if err != nil || stdout != "mini: no changes\nother: no changes\n" || stderr != "" {
 		t.Errorf("diff = %v:\n%s%s", err, stdout, stderr)
@@ -252,7 +261,12 @@ func TestEveryVersion(t *testing.T) {
 		t.Errorf("resolve = %v:\n%s", err, stdout)
 	}
 	for _, cmd := range []string{"import", "generate", "check"} {
-		if stdout, err := run(cmd); err != nil || strings.Count(stdout, "multi: ") != 2 {
+		// check says two things per version
+		want := 2
+		if cmd == "check" {
+			want = 4
+		}
+		if stdout, err := run(cmd); err != nil || strings.Count(stdout, "multi: ") != want {
 			t.Fatalf("%s = %v:\n%s", cmd, err, stdout)
 		}
 	}
