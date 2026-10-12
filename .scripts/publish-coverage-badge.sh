@@ -4,11 +4,17 @@
 # README badge needs no third-party coverage service and no token beyond the
 # workflow's own GITHUB_TOKEN.
 #
-# Usage: PCT=81.0 ./.scripts/publish-coverage-badge.sh
+# Usage: PCT=81.0 GITHUB_TOKEN=... ./.scripts/publish-coverage-badge.sh
+#
+# The checkout keeps no credentials, so the push carries the token itself; without one it pushes over whatever the remote has, for a run by hand.
 set -euo pipefail
 
 PCT="${PCT:?set PCT to the coverage percentage, e.g. 81.0}"
 BRANCH="${BRANCH:-badges}"
+REMOTE="origin"
+if [ -n "${GITHUB_TOKEN:-}" ]; then
+  REMOTE="https://x-access-token:${GITHUB_TOKEN}@github.com/${GITHUB_REPOSITORY:?set GITHUB_REPOSITORY to owner/repo}.git"
+fi
 
 # shields' own palette, so the badge reads the way people expect
 colour() {
@@ -53,5 +59,5 @@ fi
 git -C "$tmp/wt" -c user.name='github-actions[bot]' \
   -c user.email='41898282+github-actions[bot]@users.noreply.github.com' \
   commit --quiet -m "coverage: ${PCT}%"
-git -C "$tmp/wt" push --quiet origin "$BRANCH"
+git -C "$tmp/wt" push --quiet "$REMOTE" "$BRANCH"
 echo "==> published coverage ${PCT}% to $BRANCH"
