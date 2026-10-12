@@ -439,3 +439,51 @@ func applyNoting(t *testing.T, w workarounds.Workaround, spec *openapi.Spec, not
 
 	return noting.ApplyNoting(spec, func(n string) { *notes = append(*notes, n) })
 }
+
+// A schema the document lacks is added for a workaround to refer to, and an operation's answer is declared at a status the document
+// lists with no body or does not list; each refuses what the document declares now.
+func TestDeclaredSchemasAndAlsoAnswers(t *testing.T) {
+	t.Parallel()
+
+	spec, err := openapi.Parse([]byte(`{"openapi": "3.0.1", "info": {"title": "Bare", "version": "1"}, "paths": {
+    "/indexer/testall": {"post": {"operationId": "TestAll", "responses": {"200": {"description": "ok"}}}},
+    "/indexer": {"get": {"operationId": "GetIndexers", "responses": {"200": {"content": {"application/json": {"schema": {"type": "array", "items": {"$ref": "#/components/schemas/Indexer"}}}}}}}}},
+  "components": {"schemas": {"Indexer": {"type": "object"}}}}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	result := &openapi.Schema{Type: openapi.TypeObject, Properties: map[string]*openapi.Schema{"id": {Type: openapi.TypeInteger}, "isValid": {Type: openapi.TypeBoolean}}}
+	schemas := workarounds.DeclaredSchemas(workarounds.About{Name: "bare-test-result", Service: "bare", Bug: "the result is not in the document"}, map[string]*openapi.Schema{"TestResult": result})
+	var notes []string
+	if err := applyNoting(t, schemas, spec, &notes); err != nil {
+		t.Fatal(err)
+	}
+	if spec.Components.Schemas["TestResult"] != result || len(notes) != 1 || notes[0] != "TestResult declared" {
+		t.Errorf("the schema = %+v, notes %q", spec.Components.Schemas["TestResult"], notes)
+	}
+	answers := workarounds.AlsoAnswers(workarounds.About{Name: "bare-test-all-400", Service: "bare", Bug: "a 400 carries the list"}, map[string]map[int]workarounds.Answer{"POST /indexer/testall": {200: workarounds.ListOf("TestResult"), 400: workarounds.ListOf("TestResult")}})
+	notes = nil
+	if err := applyNoting(t, answers, spec, &notes); err != nil {
+		t.Fatal(err)
+	}
+	op := spec.Paths["/indexer/testall"].Post
+	if op.Responses["200"].Content["application/json"].Schema.Items.RefName() != "TestResult" || op.Responses["400"].Content["application/json"].Schema.Items.RefName() != "TestResult" || op.Responses["400"].Description != "Bad Request" || notes[0] != "2 answers declared" {
+		t.Errorf("the responses = %+v, notes %q", op.Responses, notes)
+	}
+
+	for name, w := range map[string]workarounds.Workaround{
+		"the schema again":    schemas,
+		"no schemas":          workarounds.DeclaredSchemas(workarounds.About{Name: "x", Service: "bare"}, nil),
+		"a nil schema":        workarounds.DeclaredSchemas(workarounds.About{Name: "x", Service: "bare"}, map[string]*openapi.Schema{"Other": nil}),
+		"the answers again":   answers,
+		"an answer declared":  workarounds.AlsoAnswers(workarounds.About{Name: "x", Service: "bare"}, map[string]map[int]workarounds.Answer{"GET /indexer": {200: workarounds.ListOf("Indexer")}}),
+		"no operations":       workarounds.AlsoAnswers(workarounds.About{Name: "x", Service: "bare"}, nil),
+		"no answers":          workarounds.AlsoAnswers(workarounds.About{Name: "x", Service: "bare"}, map[string]map[int]workarounds.Answer{"GET /indexer": {}}),
+		"a schema not there":  workarounds.AlsoAnswers(workarounds.About{Name: "x", Service: "bare"}, map[string]map[int]workarounds.Answer{"POST /indexer/testall": {404: workarounds.ListOf("Ghost")}}),
+		"an operation absent": workarounds.AlsoAnswers(workarounds.About{Name: "x", Service: "bare"}, map[string]map[int]workarounds.Answer{"GET /ghost": {200: workarounds.JSON()}}),
+	} {
+		if err := w.Apply(spec); err == nil {
+			t.Errorf("%s: no error", name)
+		}
+	}
+}

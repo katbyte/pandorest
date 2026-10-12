@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"maps"
+	"net/http"
 	"reflect"
 	"slices"
 	"strconv"
@@ -887,4 +888,86 @@ func shapeOf(s *openapi.Schema) string {
 	}
 
 	return out.String()
+}
+
+// DeclaredSchemas is for a record a document leaves out altogether (the *arr's result of testing a provider), which a workaround
+// then refers to by name: each schema is added to the document's components. It fails for a name the document has, which is how
+// a document that caught up retires the line.
+func DeclaredSchemas(about About, schemas map[string]*openapi.Schema) Workaround {
+	return defaultWorkaround{about, func(spec *openapi.Spec, note func(string)) error {
+		if len(schemas) == 0 {
+			return errors.New("it names no schemas")
+		}
+		for _, name := range openapi.SortedKeys(schemas) {
+			if spec.Components.Schemas[name] != nil {
+				return fmt.Errorf("the document declares %s", name)
+			}
+		}
+		if spec.Components.Schemas == nil {
+			spec.Components.Schemas = map[string]*openapi.Schema{}
+		}
+		for _, name := range openapi.SortedKeys(schemas) {
+			if schemas[name] == nil {
+				return fmt.Errorf("%s has no schema", name)
+			}
+			spec.Components.Schemas[name] = schemas[name]
+		}
+		note(strings.Join(openapi.SortedKeys(schemas), ", ") + " declared")
+
+		return nil
+	}}
+}
+
+// AlsoAnswers is for an operation that answers a body at a status its document gives none, success or not (the *arr's test of every
+// provider: a list of results, documented as nothing, as a 200 when all pass and a 400 when any fails): answers says, by method and
+// path, what each status answers, and a status the document does not list is added. With ExpectSameShape on the service, a failure
+// status that answers the success's shape is decoded as an answer. It fails for a status that declares a body already.
+func AlsoAnswers(about About, answers map[string]map[int]Answer) Workaround {
+	return defaultWorkaround{about, func(spec *openapi.Spec, note func(string)) error {
+		if len(answers) == 0 {
+			return errors.New("it names no operations")
+		}
+		added := 0
+		for _, target := range openapi.SortedKeys(answers) {
+			op, err := targeted(spec, target)
+			if err != nil {
+				return err
+			}
+			if len(answers[target]) == 0 {
+				return fmt.Errorf("%s gets no answers", target)
+			}
+			for _, status := range slices.Sorted(maps.Keys(answers[target])) {
+				code := strconv.Itoa(status)
+				resp := op.Responses[code]
+				if resp != nil && len(resp.Content) > 0 {
+					return fmt.Errorf("%s declares what a %d answers now, so take it out", target, status)
+				}
+				content, err := answers[target][status].content(spec)
+				if err != nil {
+					return fmt.Errorf("%s %d: %w", target, status, err)
+				}
+				if resp == nil {
+					resp = &openapi.Response{Description: http.StatusText(status)}
+					if op.Responses == nil {
+						op.Responses = map[string]*openapi.Response{}
+					}
+					op.Responses[code] = resp
+				}
+				resp.Content = content
+				added++
+			}
+		}
+		note(answersWord(added) + " declared")
+
+		return nil
+	}}
+}
+
+// answersWord counts answers.
+func answersWord(n int) string {
+	if n == 1 {
+		return "1 answer"
+	}
+
+	return fmt.Sprintf("%d answers", n)
 }
