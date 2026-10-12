@@ -279,6 +279,10 @@ var helpers = []helper{
 	{"IsNotFound", "// IsNotFound reports whether an error is a 404.\nfunc IsNotFound(err error) bool { return client.IsNotFound(err) }\n"},
 	{"IsUnauthorized", "// IsUnauthorized reports whether an error is a 401.\nfunc IsUnauthorized(err error) bool { return client.IsUnauthorized(err) }\n"},
 	{"IsForbidden", "// IsForbidden reports whether an error is a 403.\nfunc IsForbidden(err error) bool { return client.IsForbidden(err) }\n"},
+	{"IsBadRequest", "// IsBadRequest reports whether an error is a 400 or a 422: what was sent was refused as malformed or not allowed.\nfunc IsBadRequest(err error) bool { return client.IsBadRequest(err) }\n"},
+	{"IsConflict", "// IsConflict reports whether an error is a 409: a change that clashes with what the server holds.\nfunc IsConflict(err error) bool { return client.IsConflict(err) }\n"},
+	{"IsTooManyRequests", "// IsTooManyRequests reports whether an error is a 429.\nfunc IsTooManyRequests(err error) bool { return client.IsTooManyRequests(err) }\n"},
+	{"IsServerError", "// IsServerError reports whether an error is any 5xx: the server failing on its side.\nfunc IsServerError(err error) bool { return client.IsServerError(err) }\n"},
 	{"WasNotFound", "// WasNotFound reports whether a response is a 404.\nfunc WasNotFound(resp *http.Response) bool { return client.WasNotFound(resp) }\n"},
 }
 

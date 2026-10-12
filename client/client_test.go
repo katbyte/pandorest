@@ -369,11 +369,20 @@ func TestStatusError(t *testing.T) {
 		"a path it lacks":       {client.APIKey("k"), http.StatusNotFound, "Not Found", "(the server has no such call)", client.IsNotFound},
 		"a thing that is gone":  {client.APIKey("k"), http.StatusNotFound, `{"message": "no"}`, "", client.IsNotFound},
 		"a thing not permitted": {client.APIKey("k"), http.StatusForbidden, "", "", client.IsForbidden},
+		"a malformed ask":       {client.APIKey("k"), http.StatusBadRequest, "", "", client.IsBadRequest},
+		"a refused value":       {client.APIKey("k"), http.StatusUnprocessableEntity, "", "", client.IsBadRequest},
+		"a clash":               {client.APIKey("k"), http.StatusConflict, "", "", client.IsConflict},
+		"too many":              {client.APIKey("k"), http.StatusTooManyRequests, "", "", client.IsTooManyRequests},
+		"its own failure":       {client.APIKey("k"), http.StatusBadGateway, "", "", client.IsServerError},
 	} {
 		c, _ := serve(t, arr, tc.authorizer, answer(tc.status, tc.body))
 		resp, err := execute(t, c, get("/x"))
-		// "(expected 200)" is there for all of them; a note is a second pair of brackets
-		if err == nil || !tc.is(err) || (strings.Count(err.Error(), "(") == 2) != (tc.note != "") || !strings.Contains(err.Error(), tc.note) {
+		// "(expected 200)" is there for all of them, and "(tried 3 times)" for the ones a read asks again; a note is one pair of brackets more
+		if err == nil {
+			t.Fatalf("%s: no error", name)
+		}
+		brackets := strings.Count(strings.Replace(err.Error(), "(tried", "", 1), "(")
+		if !tc.is(err) || (brackets == 2) != (tc.note != "") || !strings.Contains(err.Error(), tc.note) {
 			t.Errorf("%s: error = %v, want the note %q", name, err, tc.note)
 		}
 		if client.WasNotFound(resp.Response) != (tc.status == http.StatusNotFound) {
@@ -382,6 +391,11 @@ func TestStatusError(t *testing.T) {
 	}
 	if client.WasNotFound(nil) {
 		t.Error("no response was not found")
+	}
+	for _, is := range []func(error) bool{client.IsNotFound, client.IsBadRequest, client.IsConflict, client.IsTooManyRequests, client.IsServerError} {
+		if is(errors.New("other")) {
+			t.Error("another error is a status")
+		}
 	}
 }
 

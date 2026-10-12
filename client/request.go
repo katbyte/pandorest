@@ -405,6 +405,31 @@ func IsUnauthorized(err error) bool { return StatusCode(err) == http.StatusUnaut
 // the one who asked.
 func IsForbidden(err error) bool { return StatusCode(err) == http.StatusForbidden }
 
+// IsBadRequest reports whether err is the server refusing what was sent as
+// malformed or not allowed: a 400 or a 422.
+func IsBadRequest(err error) bool {
+	code := StatusCode(err)
+
+	return code == http.StatusBadRequest || code == http.StatusUnprocessableEntity
+}
+
+// IsConflict reports whether err is the server refusing a change that clashes
+// with what it holds: a record that is already there, or one changed since it
+// was read.
+func IsConflict(err error) bool { return StatusCode(err) == http.StatusConflict }
+
+// IsTooManyRequests reports whether err is the server asking for fewer
+// requests, which a retry after a wait may get past.
+func IsTooManyRequests(err error) bool { return StatusCode(err) == http.StatusTooManyRequests }
+
+// IsServerError reports whether err is the server failing on its side, any
+// 5xx, which what was asked for had no part in.
+func IsServerError(err error) bool {
+	code := StatusCode(err)
+
+	return code >= http.StatusInternalServerError && code < 600
+}
+
 // WasNotFound reports whether a response is a 404.
 func WasNotFound(resp *http.Response) bool {
 	return resp != nil && resp.StatusCode == http.StatusNotFound
