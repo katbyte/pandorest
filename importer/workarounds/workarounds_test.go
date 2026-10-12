@@ -97,6 +97,30 @@ func TestVerify(t *testing.T) {
 		t.Errorf("Verify of two sound workarounds = %v", err)
 	}
 
+	// a workaround meets the document as the ones before it left it, so one that needs what an earlier one added passes after it and fails before it
+	afterTerm := fake{"mini-term-deprecated", "mini", "the term is deprecated", func(spec *openapi.Spec) error {
+		op, err := workarounds.Operation(spec, "GET", "/Items")
+		if err != nil {
+			return err
+		}
+		term := op.Parameter("query", "searchTerm")
+		switch {
+		case term == nil:
+			return errors.New("GET /Items has no searchTerm parameter")
+		case term.Deprecated:
+			return errors.New("the term is deprecated now")
+		}
+		term.Deprecated = true
+
+		return nil
+	}}
+	if err := workarounds.Verify([]workarounds.Workaround{searchTerm, afterTerm}, load); err != nil {
+		t.Errorf("Verify of a workaround after the one it needs = %v", err)
+	}
+	if err := workarounds.Verify([]workarounds.Workaround{afterTerm, searchTerm}, load); err == nil || !strings.Contains(err.Error(), "mini-term-deprecated: it does not apply to the vendored document as the workarounds before it leave it, so the bug is not there or the workaround is written wrong: GET /Items has no searchTerm parameter") {
+		t.Errorf("Verify of a workaround before the one it needs = %v", err)
+	}
+
 	noop := func(*openapi.Spec) error { return nil }
 	for _, tc := range []struct {
 		name string
@@ -109,7 +133,7 @@ func TestVerify(t *testing.T) {
 		{"the bug is not there", []workarounds.Workaround{fake{"mini-gone", "mini", "a bug", func(spec *openapi.Spec) error {
 			_, err := workarounds.Operation(spec, "GET", "/Gone")
 			return err
-		}}}, "mini-gone: it does not apply to the vendored document, so the bug is not there or the workaround is written wrong: GET /Gone is not in the document"},
+		}}}, "mini-gone: it does not apply to the vendored document as the workarounds before it leave it, so the bug is not there or the workaround is written wrong: GET /Gone is not in the document"},
 		{"would not notice a fix", []workarounds.Workaround{fake{"mini-blind", "mini", "a bug", noop}}, "mini-blind: applying it again succeeded, so it would not notice the bug being fixed"},
 		{"panics without a 200", []workarounds.Workaround{fake{"mini-panics", "mini", "a bug", func(spec *openapi.Spec) error {
 			media := spec.Operation("GET", "/Things").Responses["200"].Content["application/json"]
