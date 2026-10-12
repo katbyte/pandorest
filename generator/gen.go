@@ -670,16 +670,17 @@ func (g *gen) docFile() string {
 		}
 		fmt.Fprintf(&b, "//\n// A list operation, one whose options page with %s, also has a\n// <Name>Complete method that loads every result, and a <Name>Each that\n// hands them out one at a time as a range, so a loop that stops asks for no\n// page more.\n", pages)
 	}
+	if notes := comment("", g.opts.Notes); notes != "" {
+		// before the Ids heading, or the service's own words read as part of it
+		b.WriteString("//\n")
+		b.WriteString(notes)
+	}
 	if len(g.svc.IDs) > 0 {
 		names := make([]string, 0, len(g.svc.IDs))
 		for _, k := range g.svc.IDs {
 			names = append(names, k.Name)
 		}
 		fmt.Fprintf(&b, "//\n// # Ids\n//\n// %s are kinds of id the package tells apart, each a bare named type over\n// the int or string the document declares, so that one kind where another goes\n// does not compile. Where an id sits among the options it is held by value and\n// sent when not zero. int(id) and SeriesID(n) convert one value, client.IDs and\n// client.StringIDs a list.\n", strings.Join(names, ", "))
-	}
-	if notes := comment("", g.opts.Notes); notes != "" {
-		b.WriteString("//\n")
-		b.WriteString(notes)
 	}
 	if len(g.svc.Workarounds) > 0 {
 		b.WriteString("//\n// # Workarounds\n//\n// The importer fixed these bugs in the document before generating from it:\n//\n")

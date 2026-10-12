@@ -1,6 +1,8 @@
 ## v0.8.3 (2026-10-12)
 
 - **`KeepNull` reaches an answer declared inline.** It was checked before the operations were read, and an inline answer is a model only once its operation is, so a document with no components could name nothing. Dockhand's registry test answer.
+- **The import says when a text parameter named like a list is typed as one id.** Emby's `ExcludeItemIds` carries several ids in one text value, which only `Joined` says, and by name it came out as a single id with nothing said. The line names each such parameter and where it is.
+- **A service's `Notes` come before the Ids heading in `doc.go`**, where they landed under it and read as part of it.
 - **`Of` reads a model whose id is spelt `Id`.** Emby and Jellyfin capitalise theirs, and the lookup wanted the exact lower-case name, so the kind was refused as naming a model with no id. Embyfin got past it with a `Base` beside `Of`; that can go.
 - **The generated test of a joined list sets one form.** `JoinedLists` puts a list beside its string under one name on the wire, and the test set both on one call and then expected each alone, so every such test failed; on Emby that was 70 across 21 packages. The test now sets the string alone.
 

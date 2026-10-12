@@ -998,7 +998,11 @@ func TestIDs(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	dir := generateInModule(t, svc, generator.Options{})
+	dir := generateInModule(t, svc, generator.Options{Notes: "Dates are strings."})
+	// the service's own notes come before the Ids heading, or they read as part of it
+	if doc := read(t, dir, "doc.go"); !strings.Contains(doc, "// Dates are strings.") || strings.Index(doc, "// Dates are strings.") > strings.Index(doc, "// # Ids") {
+		t.Errorf("doc.go has the notes under Ids:\n%s", doc)
+	}
 	// a kind with a shape refuses a value without it before any request, naming the value
 	if err := os.WriteFile(filepath.Join(dir, "shape_test.go"), []byte(`package mini
 
