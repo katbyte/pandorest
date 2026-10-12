@@ -1330,16 +1330,21 @@ func TestIDsSpeltId(t *testing.T) {
 	t.Parallel()
 
 	spec, err := openapi.Parse([]byte(`{"openapi": "3.0.1", "info": {"title": "Emby", "version": "1"}, "paths": {
-    "/Items/{id}": {"get": {"operationId": "GetItemsById", "tags": ["Items"], "parameters": [{"name": "id", "in": "path", "required": true, "schema": {"type": "string"}}],
+    "/Items/{id}": {"get": {"operationId": "GetItemsById", "tags": ["Items"], "parameters": [{"name": "id", "in": "path", "required": true, "schema": {"type": "string"}}, {"name": "ExcludeItemIds", "in": "query", "schema": {"type": "string"}}],
       "responses": {"200": {"content": {"application/json": {"schema": {"$ref": "#/components/schemas/BaseItemDto"}}}}}}}},
   "components": {"schemas": {"BaseItemDto": {"type": "object", "properties": {"Id": {"type": "string"}, "Name": {"type": "string"}}}}}}`))
 	if err != nil {
 		t.Fatal(err)
 	}
-	cfg := config.Service{Name: "emby", Package: "emby", Naming: config.OperationIDNaming, Auth: "APIKey", IDs: []config.ID{{Name: "ItemID", Of: []string{"BaseItemDto"}}}}
-	svc, err := FromSpec(cfg, spec, nil, func(string) {})
+	var logged []string
+	cfg := config.Service{Name: "emby", Package: "emby", Naming: config.OperationIDNaming, Auth: "APIKey", IDs: []config.ID{{Name: "ItemID", Of: []string{"BaseItemDto"}, Names: []string{"ExcludeItemIds"}}}}
+	svc, err := FromSpec(cfg, spec, nil, func(msg string) { logged = append(logged, msg) })
 	if err != nil {
 		t.Fatal(err)
+	}
+	// a text parameter named like a list, typed as one id by name, is said, since only Joined would make it the list it may be
+	if want := "emby: 1 text parameter named like a list is typed as one id (name it in Joined if it carries several joined by commas): ExcludeItemIds in GET /Items/{id}"; !slices.Contains(logged, want) {
+		t.Errorf("the log lacks %q:\n%s", want, strings.Join(logged, "\n"))
 	}
 	if got := fieldNamed(svc.Models()["BaseItemDto"].Fields, "Id").Type; got != (definitions.TypeRef{Type: definitions.ID, ReferenceName: "ItemID"}) {
 		t.Errorf("BaseItemDto.Id = %+v", got)

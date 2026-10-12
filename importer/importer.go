@@ -109,6 +109,8 @@ type importer struct {
 	// typeNames maps every Go type name declared so far to where it came from
 	typeNames map[string]string
 	failures  []string
+	// oneIDTexts is each text parameter named like a list (excludeItemIds) a kind typed as one id, to say so
+	oneIDTexts []string
 }
 
 // checkWords holds the config's Words to spelling only: a key in lower case,

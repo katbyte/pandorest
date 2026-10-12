@@ -364,6 +364,10 @@ func (im *importer) typeAsID(k *idKind, p *place, source string) bool {
 	case p.typ.Type == definitions.List && p.typ.NestedItem != nil && baseFits(k.base, p.typ.NestedItem.Type, false):
 		*p.typ.NestedItem = id
 	case baseFits(k.base, p.typ.Type, p.path):
+		if p.option != nil && p.typ.Type == definitions.String && strings.HasSuffix(strings.ToLower(p.name), "ids") {
+			// Emby's ExcludeItemIds is one text value carrying several, which only Joined says; typed as one id, a caller finds out by reading the options
+			im.oneIDTexts = append(im.oneIDTexts, p.name+" in "+p.where)
+		}
 		*p.typ = id
 	default:
 		hint := ""
@@ -417,6 +421,11 @@ func (im *importer) plain(p *place) bool {
 // word over many places, the models whose bare id it leaves plain, where a
 // kind's id under another model's name would hide.
 func (im *importer) logUncovered(places []place, typed map[*definitions.TypeRef]string) {
+	if n := len(im.oneIDTexts); n == 1 {
+		im.log(fmt.Sprintf("%s: 1 text parameter named like a list is typed as one id (name it in Joined if it carries several joined by commas): %s", im.cfg.Name, im.oneIDTexts[0]))
+	} else if n > 1 {
+		im.log(fmt.Sprintf("%s: %d text parameters named like lists are typed as one id each (name each in Joined if it carries several joined by commas): %s", im.cfg.Name, n, strings.Join(im.oneIDTexts, ", ")))
+	}
 	var plainModels []string
 	byName := map[string][]string{}
 	for i := range places {
