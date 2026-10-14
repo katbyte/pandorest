@@ -81,7 +81,7 @@ A method whose answer is a file has a second form, `<Name>To`, that takes a writ
 
 A job's method waits for the job, because the connection asked the server to answer when it is done. For a connection of the repository's own that starts a job and follows it instead, each job method has `<Name>Call` beside it, a function answering the method's name and its arguments as the method would send them: `method, params := pool.ScrubCall("tank", truenas.PoolScrubActionStart)`.
 
-The types package has `Operations`, a table of every method for a program to go by rather than the comments: the operation's name, the server's method, the group whose client has it, whether it changes nothing, whether it runs as a job, a query's form, and whether its answer is a file or it takes one. A read-only guard, a count of what a test suite called, or a sweep of the repository's own reads it.
+The types package has `Operations`, a table of every operation for a program to go by rather than the comments: the operation's name, its HTTP method and path or the server's method, the group whose client has it, whether it changes nothing, whether it runs as a job, a query's form, and whether its answer is a file or it takes one. A read-only guard, a count of what a test suite called, or a sweep of the repository's own reads it. Every package has it, REST or JSON-RPC.
 
 A query's filters are a list of conditions, each a list of a field, a comparison and a value, which `client.Where`, `client.Filters` and `client.AnyOf` write out so the nesting is never typed by hand: `client.Filters(client.Where("name", "=", "tank"), client.AnyOf(client.Where("size", ">", 10), client.Where("status", "in", []string{"ONLINE"})))`.
 

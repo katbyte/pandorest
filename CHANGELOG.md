@@ -9,7 +9,7 @@
 - **A method that answers a file, or takes one, works.** It gets a `To` form that writes the file out, or takes files as readers at the end. The connection carries the file through `client.Downloader` and `client.Uploader`.
 - **A job's call can be had without the wait.** `<Name>Call` answers the method name and arguments for a connection that starts a job and follows it.
 - **The read sweep walks a service of calls.** Each read is called through the generated client, every answer judged as it came, and a refusal held to the error name its case expects.
-- **A program can read what each method is.** `Operations` lists every method with whether it changes nothing, runs as a job, is a query form, or carries a file.
+- **A program can read what each operation is.** Every package has `Operations`, a table of each operation with its method and path, its group, whether it changes nothing, runs as a job, is a query form, or carries a file. A repository regenerating on this version gains the one file.
 - **A flag in a record a call sends is left out unless set.** Changing a scrub's threshold no longer switches the scrub off.
 - **A list sent unset goes as an empty list.** The server reads null as no list at all.
 - **A method counts as a read by the roles that may call it.** `ReadRole` names the role, `Reads` and `NotReads` the exceptions, and the import refuses a name that is no method.

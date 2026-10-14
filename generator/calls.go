@@ -3,6 +3,7 @@ package generator
 import (
 	"fmt"
 	"go/token"
+	"net/http"
 	"path"
 	"slices"
 	"strings"
@@ -168,32 +169,49 @@ func (g *gen) writeCallMethod(b *strings.Builder, o *definitions.Operation, resp
 	}
 }
 
-// operationsFile is the types package's operations.go for a call service: a table of every method a program can go by, where
-// the comments say the same to a reader.
+// operationsFile is the types package's operations.go: a table of every operation a program can go by, where the comments say
+// the same to a reader. A request has its HTTP method and path; a call the server's method.
 func (g *gen) operationsFile() string {
-	g.declare("Operation", "operations.go")
+	g.declare("OperationInfo", "operations.go")
 	g.declare("Operations", "operations.go")
 
 	var b strings.Builder
-	b.WriteString("// Operation is one method of the package, as a program goes by it: Name is the operation's name, which its response type and\n// test carry, Method the server's, Group the tag whose client has it, Read whether it changes nothing on the server, Job whether\n// the server runs it as a job, Form the one-record (\"get\") or count (\"count\") form of a query, and File \"download\" for a method\n// whose answer is a file or \"upload\" for one that takes files.\ntype Operation struct {\n\tName   string\n\tMethod string\n\tGroup  string\n\tRead   bool\n\tJob    bool\n\tForm   string\n\tFile   string\n}\n\n")
-	b.WriteString("// Operations is every method of the package, in the order of their names.\nvar Operations = []Operation{\n")
+	b.WriteString("// OperationInfo is one operation of the package, as a program goes by it: Name is the operation's name, which its method,\n// response type and test carry; Method and Path its HTTP method and path, or Method the server's method for a call; Group the\n// tag whose client has it; Read whether it changes nothing on the server (a GET, or a call that may be made by a read-only\n// role); Job whether the server runs a call as a job; Form the one-record (\"get\") or count (\"count\") form of a query; and\n// File \"download\" for an operation whose answer is a file or \"upload\" for one that takes one.\ntype OperationInfo struct {\n\tName   string\n\tMethod string\n\tPath   string\n\tGroup  string\n\tRead   bool\n\tJob    bool\n\tForm   string\n\tFile   string\n}\n\n")
+	b.WriteString("// Operations is every operation of the package, group by group in the order of their names.\nvar Operations = []OperationInfo{\n")
 	for gi := range g.svc.Groups {
 		grp := &g.svc.Groups[gi]
 		for oi := range grp.Operations {
 			o := &grp.Operations[oi]
-			file := ""
+			row := operationRow{Name: o.Name, Group: grp.Name}
 			switch {
-			case o.Call.Downloadable:
-				file = "download"
-			case o.Call.Uploadable:
-				file = "upload"
+			case o.Call != nil:
+				row.Method, row.Read, row.Job, row.Form = o.Call.Method, o.Call.Read, o.Call.Job, o.Call.Form
+				if o.Call.Downloadable {
+					row.File = "download"
+				} else if o.Call.Uploadable {
+					row.File = "upload"
+				}
+			default:
+				row.Method, row.Path, row.Read = o.Method, o.Path, o.Method == http.MethodGet
+				if o.Response != nil && o.Response.Type.Type == definitions.RawFile {
+					row.File = "download"
+				} else if o.Request != nil && o.Request.Type.Type == definitions.RawFile {
+					row.File = "upload"
+				}
 			}
-			fmt.Fprintf(&b, "\t{Name: %q, Method: %q, Group: %q, Read: %t, Job: %t, Form: %q, File: %q},\n", o.Name, o.Call.Method, grp.Name, o.Call.Read, o.Call.Job, o.Call.Form, file)
+			fmt.Fprintf(&b, "\t{Name: %q, Method: %q, Path: %q, Group: %q, Read: %t, Job: %t, Form: %q, File: %q},\n", row.Name, row.Method, row.Path, row.Group, row.Read, row.Job, row.Form, row.File)
 		}
 	}
 	b.WriteString("}\n")
 
 	return g.fileHeader(b.String())
+}
+
+// operationRow is a row of the generated Operations table, as the generator builds it before writing it out.
+type operationRow struct {
+	Name, Method, Path, Group string
+	Read, Job                 bool
+	Form, File                string
 }
 
 // callClient is the client.go of a call service in the flat layout: the Client over a Caller, and New.

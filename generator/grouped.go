@@ -158,10 +158,8 @@ func (g *gen) renderGrouped(add func(name, src string) error) error {
 	if err := add(root+"helpers.go", g.helpersFile()); err != nil {
 		return err
 	}
-	if g.calls() {
-		if err := add(root+"operations.go", g.operationsFile()); err != nil {
-			return err
-		}
+	if err := add(root+"operations.go", g.operationsFile()); err != nil {
+		return err
 	}
 	if g.datesFile() {
 		if err := add(root+"time.go", g.timeFile()); err != nil {

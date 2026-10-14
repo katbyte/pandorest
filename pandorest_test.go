@@ -167,7 +167,7 @@ func TestImportGenerateCheck(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(stdout, "mini: 9 files -> "+filepath.Join(root, "sdk", "mini")) || !strings.Contains(stdout, "other: 5 files -> "+filepath.Join(root, "lib", "other")) {
+	if !strings.Contains(stdout, "mini: 10 files -> "+filepath.Join(root, "sdk", "mini")) || !strings.Contains(stdout, "other: 6 files -> "+filepath.Join(root, "lib", "other")) {
 		t.Errorf("generate reported:\n%s", stdout)
 	}
 	mini := listFiles(t, filepath.Join(root, "sdk", "mini"))

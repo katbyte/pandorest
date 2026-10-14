@@ -1285,6 +1285,26 @@ func TestNamedTypes(t *testing.T) {
 	}
 }
 
+// Every package has a table of its operations a program can go by: a request with its method and path, read for a GET, and
+// whether it answers or takes a file.
+func TestOperationsTable(t *testing.T) {
+	t.Parallel()
+
+	files, err := generator.Render(miniDefinitions(t), generator.Options{ClientImport: testClient})
+	if err != nil {
+		t.Fatal(err)
+	}
+	src := string(files["operations.go"])
+	for _, want := range []string{"type OperationInfo struct {", "var Operations = []OperationInfo{", `{Name: "GetItems", Method: "GET", Path: "/Items", Group: "Items", Read: true, Job: false, Form: "", File: ""},`} {
+		if !strings.Contains(src, want) {
+			t.Errorf("operations.go lacks %q:\n%s", want, src)
+		}
+	}
+	if !regexp.MustCompile(`Method: "(POST|PUT|DELETE)", Path: "[^"]+", Group: "[A-Za-z]+", Read: false`).MatchString(src) {
+		t.Errorf("no write in the table:\n%s", src)
+	}
+}
+
 // A credential named by a phrase is an argument called credential, and the
 // phrase words the refusal.
 func TestCredentialPhrase(t *testing.T) {
