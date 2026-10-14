@@ -785,6 +785,18 @@ func TestPaging(t *testing.T) {
 	if o := importPaging(t, &config.Paging{Start: "startindex", Limit: "LIMIT", Items: "items", Total: "totalRecordCount"}); o.Pageable == nil || o.Pageable.StartIndexOption != "StartIndex" || o.Pageable.ItemsField != "Items" {
 		t.Errorf("paging names in another case = %+v", o.Pageable)
 	}
+	// a first page is only for a list paged by number, and never below 0
+	for _, paging := range []config.Paging{{Start: "startIndex", Limit: "limit", Items: "Items", Total: "TotalRecordCount", FirstPage: new(0)}, {Start: "startIndex", Limit: "limit", Items: "Items", Total: "TotalRecordCount", ByPage: true, FirstPage: new(-1)}} {
+		spec, err := openapi.Parse([]byte(miniSpec))
+		if err != nil {
+			t.Fatal(err)
+		}
+		cfg := miniConfig
+		cfg.Paging = &paging
+		if _, err := FromSpec(cfg, spec, nil, nil); err == nil || !strings.Contains(err.Error(), "FirstPage") {
+			t.Errorf("FirstPage %d with ByPage %v imported: %v", *paging.FirstPage, paging.ByPage, err)
+		}
+	}
 	for name, paging := range map[string]*config.Paging{
 		"another start":       {Start: "page", Limit: "limit", Items: "Items", Total: "TotalRecordCount"},
 		"another limit":       {Start: "startIndex", Limit: "pageSize", Items: "Items", Total: "TotalRecordCount"},
@@ -833,6 +845,40 @@ func TestImportFromFile(t *testing.T) {
 	cfg.Spec = cfg.SpecPath("2")
 	if _, err := Import(cfg, nil, nil); err == nil {
 		t.Error("Import of a document that is not there succeeded")
+	}
+}
+
+// A JSON-RPC service vendors its method list as <name>-methods-<version>.json, which Resolve finds and Import reads through
+// the jsonrpc loader: every method is a call, grouped by its namespace.
+func TestImportJSONRPCFromFile(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	cfg := config.Service{Name: "truenas", Package: "truenas", Naming: config.OperationIDNaming, Document: config.JSONRPCDocument, ReadRole: "READONLY_ADMIN"}.In(root)
+	if err := os.MkdirAll(filepath.Join(root, config.DefaultDir), 0o750); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, config.DefaultDir, "truenas-methods-25.10.7.json"), []byte(methods), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := cfg.Resolve()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Version != "25.10.7" || cfg.Spec != filepath.Join(config.DefaultDir, "truenas-methods-25.10.7.json") {
+		t.Fatalf("Resolve = version %q, document %q", cfg.Version, cfg.Spec)
+	}
+
+	svc, err := Import(cfg, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	o := find(svc.Operations(), func(o *definitions.Operation) bool { return o.Name == "PoolQuery" })
+	if o == nil || (*o).Call == nil || !(*o).Call.Read || !(*o).Call.Filterable || svc.Source != cfg.Spec {
+		t.Errorf("Import of a methods file: PoolQuery %+v, source %q", o, svc.Source)
+	}
+	if g := find(svc.Groups, func(g definitions.Group) bool { return g.Name == "Pool" }); g == nil {
+		t.Errorf("Import of a methods file: no Pool group among %d groups", len(svc.Groups))
 	}
 }
 

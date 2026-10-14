@@ -776,6 +776,40 @@ func TestPagerWithoutLimit(t *testing.T) {
 
 // A service that gives the layouts its dates are written in has them as Time
 // and Day: fields left out when zero, options sent in the first layout, and
+// A service whose pages count from 0 says so with FirstPage, and its pager
+// asks for page 0 first and counts the pages it has loaded from there; the
+// generated tests expect the same.
+//
+//nolint:paralleltest // writes the testdata package the other tests would remove
+func TestFirstPage(t *testing.T) {
+	spec, err := openapi.Parse([]byte(`{"openapi": "3.0.1", "info": {"title": "Mini", "version": "1"}, "paths": {
+    "/items": {"get": {"operationId": "GetItems", "tags": ["Items"], "parameters": [{"name": "page", "in": "query", "schema": {"type": "integer"}}, {"name": "limit", "in": "query", "schema": {"type": "integer"}}],
+      "responses": {"200": {"content": {"application/json": {"schema": {"type": "object", "properties": {"results": {"type": "array", "items": {"type": "object", "properties": {"id": {"type": "integer"}}}}, "total": {"type": "integer"}}}}}}}}}}}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg := config.Service{Name: "mini", Package: "mini", Naming: config.OperationIDNaming, Auth: "APIKey", Paging: &config.Paging{Start: "page", Limit: "limit", Items: "results", Total: "total", ByPage: true, FirstPage: new(0)}}
+	svc, err := importer.FromSpec(cfg, spec, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir := generateInModule(t, svc, generator.Options{})
+	goTool(t, dir, "vet")
+	goTool(t, dir, "test")
+
+	for file, wants := range map[string][]string{
+		"items_method_getitems.go":      {"\tnumber := 0\n\tif option.Page != nil && *option.Page > 0 {\n\t\tnumber = *option.Page\n\t}\n\toption.Page = &number\n", "page.Answer.Total > 0 && (number+1)*limit >= page.Answer.Total {"},
+		"items_method_getitems_test.go": {`{"total reached", 2, 9, GetItemsOptions{Limit: new(1)}, 2, []string{"0", "1"}},`, `{"short page", 0, 9, GetItemsOptions{Limit: new(2)}, 1, []string{"0"}},`},
+	} {
+		src := read(t, dir, file)
+		for _, want := range wants {
+			if !strings.Contains(src, want) {
+				t.Errorf("%s lacks %q:\n%s", file, want, src)
+			}
+		}
+	}
+}
+
 // A record with a Name and an Id gets GetName and GetId, so one piece of code
 // can take records of several types; a record lacking either, or one with a
 // field already so named, gets neither.
@@ -995,7 +1029,8 @@ func TestIDs(t *testing.T) {
 		{Name: "SeriesID", Of: []string{"Series"}, Joined: []string{"ids"}},
 		{Name: "ItemID", Of: []string{"Item"}, Names: []string{"itemId"}, Shape: "^[0-9a-f]{4}$", Example: "0a1b"},
 		{Name: "UserID", Base: "string", Names: []string{"userId"}},
-		{Name: "TagID", Base: "int", Names: []string{"tags", "tagIds"}, Shape: "^[1-9][0-9]*$", Example: "7"},
+		// a shape the sampler's 1 and 2 do not match, so a generated test of a list must use the example or refuse its own call
+		{Name: "TagID", Base: "int", Names: []string{"tags", "tagIds"}, Shape: "^[7-9][0-9]*$", Example: "7"},
 	}}
 	svc, err := importer.FromSpec(cfg, spec, nil, nil)
 	if err != nil {
@@ -1005,6 +1040,10 @@ func TestIDs(t *testing.T) {
 	// the service's own notes come before the Ids heading, or they read as part of it
 	if doc := read(t, dir, "doc.go"); !strings.Contains(doc, "// Dates are strings.") || strings.Index(doc, "// Dates are strings.") > strings.Index(doc, "// # Ids") {
 		t.Errorf("doc.go has the notes under Ids:\n%s", doc)
+	}
+	// the conversion example names this package's first kind over its own base, not a kind from another service
+	if doc := read(t, dir, "doc.go"); !strings.Contains(doc, "int(id) and SeriesID(n) convert one value") {
+		t.Errorf("doc.go's Ids example does not name the first kind:\n%s", doc)
 	}
 	// a kind with a shape refuses a value without it before any request, naming the value
 	if err := os.WriteFile(filepath.Join(dir, "shape_test.go"), []byte(`package mini
@@ -1021,7 +1060,7 @@ func TestShape(t *testing.T) {
 	if _, err := c.GetItem(t.Context(), ItemID("x32")); err == nil || err.Error() != "x32 is not an ItemID (the shape is ^[0-9a-f]{4}$)" {
 		t.Errorf("a malformed id = %v", err)
 	}
-	if _, err := c.GetSeries(t.Context(), GetSeriesOptions{TagIds: []TagID{3, 0}}); err == nil || !strings.Contains(err.Error(), "0 is not a TagID") {
+	if _, err := c.GetSeries(t.Context(), GetSeriesOptions{TagIds: []TagID{7, 0}}); err == nil || !strings.Contains(err.Error(), "0 is not a TagID") {
 		t.Errorf("a malformed id among a list = %v", err)
 	}
 	if n := len(s.requests); n != 0 {
@@ -1042,8 +1081,10 @@ func TestShape(t *testing.T) {
 		"series_model_series.go":         {"Id    SeriesID `json:\"id,omitempty\"`", "Tags  []TagID  `json:\"tags,omitzero\"`"},
 		"series_method_putseriesbyid.go": {"func (c Client) PutSeriesById(ctx context.Context, id SeriesID, input Series) (", `url.PathEscape(strconv.Itoa(int(id)))`},
 		"series_method_getseries.go":     {"Ids    []SeriesID", "TagIds []TagID", `out.Append("ids", client.Joined(o.Ids))`, `out.Append("tagIds", strconv.Itoa(int(v)))`},
-		"items_method_getitem.go":        {"func (c Client) GetItem(ctx context.Context, itemId ItemID, options ...GetItemOptions) (", "if err = itemId.Check(); err != nil {", `url.PathEscape(string(itemId))`, `if o.UserId != "" {`, `out.Append("userId", string(o.UserId))`},
-		"items_model_item.go":            {"Id     ItemID `json:\"id,omitempty\"`", "UserId UserID `json:\"userId,omitempty\"`"},
+		// a list of a shaped kind is filled with its example, not 1 and 2, or the method refuses the call before the wire is seen
+		"series_method_getseries_test.go": {"TagIds: []TagID{TagID(7), TagID(7)}"},
+		"items_method_getitem.go":         {"func (c Client) GetItem(ctx context.Context, itemId ItemID, options ...GetItemOptions) (", "if err = itemId.Check(); err != nil {", `url.PathEscape(string(itemId))`, `if o.UserId != "" {`, `out.Append("userId", string(o.UserId))`},
+		"items_model_item.go":             {"Id     ItemID `json:\"id,omitempty\"`", "UserId UserID `json:\"userId,omitempty\"`"},
 	} {
 		src := read(t, dir, file)
 		for _, want := range wants {

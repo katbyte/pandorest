@@ -34,7 +34,7 @@ A repository that vendors its dependencies takes a new pandorest in this order: 
 | `Naming` | `PathNaming` names a method after its HTTP method and path; `OperationIDNaming` after its operationId |
 | `PathPrefix`, `Words` | for path naming: a prefix left out of names (`/api/v3`), and the spelling of run-together segments (`episodefile` as `EpisodeFile`) |
 | `TagSuffix` | trimmed from tags to make group names (`Service` on Emby) |
-| `Paging`, `Pagings` | the query parameters and answer properties that make an operation a list, and whether it pages by start index or page number. A list gets `Complete` and `Each`. `Limit` may be empty where the server fixes the page size (TMDB), and `Items` where each answer names its list differently (Dockhand). `Pagings` are further shapes for a service whose lists do not all page alike |
+| `Paging`, `Pagings` | the query parameters and answer properties that make an operation a list, and whether it pages by start index or page number. A list gets `Complete` and `Each`. `Limit` may be empty where the server fixes the page size (TMDB), and `Items` where each answer names its list differently (Dockhand). `Pagings` are further shapes for a service whose lists do not all page alike. A service whose pages count from 0 says `FirstPage: new(0)` beside `ByPage` |
 | `KeepNull` | fields, as `Schema.property`, held as pointers because their zero is not their absence: a number whose null is not 0 (season 0 is the specials), or a string the server clears only when sent empty |
 | `WrittenWhole` | settings schemas read and written back whole, whose empty strings and zeros are sent rather than left out |
 | `SendRequired` | a property the document requires is always sent |
