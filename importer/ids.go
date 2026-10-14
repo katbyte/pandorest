@@ -247,6 +247,10 @@ func places(groups map[string]*definitions.Group) []place {
 				a := &o.Options[ai]
 				out = append(out, place{where: where, name: a.Name, typ: &a.Type, option: a})
 			}
+			for ai := range o.Arguments {
+				a := &o.Arguments[ai]
+				out = append(out, place{where: where, name: a.Name, typ: &a.Type})
+			}
 		}
 	}
 

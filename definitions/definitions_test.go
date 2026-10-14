@@ -59,6 +59,37 @@ func TestSaveLoad(t *testing.T) {
 	}
 }
 
+// A group named Service goes in Service.group.json, clear of the service description's file, and comes back as itself.
+func TestGroupNamedService(t *testing.T) {
+	t.Parallel()
+
+	if GroupFile("Pool") != "Pool.json" || GroupFile("Service") != "Service.group.json" {
+		t.Errorf("GroupFile = %q, %q", GroupFile("Pool"), GroupFile("Service"))
+	}
+
+	dir := t.TempDir()
+	svc := sample()
+	svc.Groups = append(svc.Groups, Group{Name: "Service", Tag: "service", Operations: []Operation{{Name: "ServiceStart", Method: "CALL", Path: "service.start", Call: &Call{Method: "service.start"}}}})
+	if err := Save(svc, dir); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "Service.group.json")); err != nil {
+		t.Fatalf("the group's file: %v", err)
+	}
+	raw, err := os.ReadFile(filepath.Join(dir, ServiceFile)) //nolint:gosec // a temp dir
+	if err != nil || strings.Contains(string(raw), "service.start") {
+		t.Errorf("Service.json holds the group, or is unreadable: %v", err)
+	}
+
+	got, err := Load(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(got, svc) {
+		t.Errorf("round trip:\n got %+v\nwant %+v", got, svc)
+	}
+}
+
 func TestLoadRejects(t *testing.T) {
 	t.Parallel()
 

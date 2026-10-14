@@ -28,7 +28,7 @@ const buggy = `{"openapi": "3.0.1", "info": {"title": "Buggy", "version": "1"}, 
   "/Path": {"get": {"operationId": "GetPath", "tags": ["System"], "responses": {"200": {"content": {"application/json": {"schema": {"type": "string"}}}}}}},
   "/Ping": {"get": {"operationId": "Ping", "tags": ["System"], "responses": {"200": {}}}},
   "/Version": {"get": {"operationId": "GetVersion", "tags": ["System"], "responses": {"200": {"content": {"text/plain": {"schema": {"type": "string"}}}}}}}},
-  "components": {"schemas": {"Thing": {"type": "object", "properties": {"id": {"type": "integer"}, "createdAt": {"type": "string"}, "seenAt": {"type": "string", "format": "date-time"}, "born": {"type": "string"}, "stamp": {"type": "integer"}, "status": {"type": "string"}, "details": {"type": "object", "properties": {"status": {"type": "string"}}}}},
+  "components": {"schemas": {"Thing": {"type": "object", "properties": {"id": {"type": "integer"}, "createdAt": {"type": "string"}, "seenAt": {"type": "string", "format": "date-time"}, "born": {"type": "string"}, "stamp": {"type": "integer"}, "status": {"type": "string"}, "details": {"type": "object", "properties": {"status": {"type": "string"}}}, "extra": {"type": "object"}}},
     "Note": {"type": "object", "properties": {"createdAt": {"type": "string"}}},
     "Kind": {"type": "string", "enum": ["movie", "show"]}}}}`
 
@@ -67,6 +67,8 @@ func defaults() []workarounds.Workaround {
 		workarounds.JoinedLists(about("thing-lists", "kinds and names are declared one string; the server reads each as several joined by commas"), map[string]workarounds.Joined{"kinds": {Of: "Kind", In: []string{"GET /Things"}}, "names": {Of: "string"}}),
 		workarounds.UndeclaredEnums(about("thing-status", "a thing's status is declared a plain string; the server writes one of three, where its details' status is free text"), map[string]workarounds.Enum{"status": {Name: "ThingStatus", Values: []string{"new", "done", "gone"}, In: []string{"Thing .status"}}}),
 		workarounds.UndeclaredDays(about("thing-days", "a thing's born is declared a plain string; the server writes a day"), "born"),
+		workarounds.NamedTypes(about("thing-secrets", "a thing's id is hidden from a read-only caller behind a placeholder"), "github.com/katbyte/pandorest/client", map[string]string{"Thing.id": "client.Secret[int]"}),
+		workarounds.DeclaredShapes(about("thing-extra", "a thing's extra is declared an open record; the server writes a count in it"), map[string]*openapi.Schema{"Thing.extra": {Type: openapi.TypeObject, Properties: map[string]*openapi.Schema{"count": {Type: openapi.TypeInteger}}}}),
 	}
 }
 
@@ -85,16 +87,22 @@ func TestDefaultWorkarounds(t *testing.T) {
 	}
 	var logged []string
 	applied, err := workarounds.Apply(defaults(), "buggy", spec, func(msg string) { logged = append(logged, msg) })
-	if err != nil || len(applied) != 11 || applied[0] != "buggy-ui-routes" {
+	if err != nil || len(applied) != 13 || applied[0] != "buggy-ui-routes" {
 		t.Fatalf("Apply = %v, %v", applied, err)
 	}
-	for _, want := range []string{"buggy: applied workaround buggy-thing-dates: createdAt in 1 place", "buggy: applied workaround buggy-thing-days: born in 1 place", "buggy: applied workaround buggy-thing-status: status as ThingStatus in 1 place", "buggy: applied workaround buggy-ui-routes"} {
+	for _, want := range []string{"buggy: applied workaround buggy-thing-dates: createdAt in 1 place", "buggy: applied workaround buggy-thing-days: born in 1 place", "buggy: applied workaround buggy-thing-status: status as ThingStatus in 1 place", "buggy: applied workaround buggy-ui-routes", "buggy: applied workaround buggy-thing-secrets: 1 fields held as named types", "buggy: applied workaround buggy-thing-extra: 1 fields given a shape"} {
 		if !slices.Contains(logged, want) {
 			t.Errorf("the log lacks %q:\n%s", want, strings.Join(logged, "\n"))
 		}
 	}
 	if thing := spec.Components.Schemas["Thing"].Properties; thing["createdAt"].Format != "date-time" || thing["born"].Format != "date" || thing["seenAt"].Format != "date-time" || thing["stamp"].Format != openapi.FormatUnixSeconds {
 		t.Errorf("the dates are not declared: createdAt %q, born %q, seenAt %q, stamp %q", thing["createdAt"].Format, thing["born"].Format, thing["seenAt"].Format, thing["stamp"].Format)
+	}
+	if id := spec.Components.Schemas["Thing"].Properties["id"].GoType; id == nil || id.Name != "client.Secret[int]" || id.Import != "github.com/katbyte/pandorest/client" {
+		t.Errorf("the id is not held as the named type: %+v", id)
+	}
+	if extra := spec.Components.Schemas["Thing"].Properties["extra"]; extra.Properties["count"] == nil || extra.Properties["count"].Type != openapi.TypeInteger {
+		t.Errorf("the extra was not given its shape: %+v", extra)
 	}
 
 	if spec.Paths["/"] != nil {
@@ -229,6 +237,15 @@ func TestDefaultWorkaroundFailures(t *testing.T) {
 		{"a property that is declared", workarounds.UndeclaredProperties(a, map[string]map[string]*openapi.Schema{"Thing": {"id": {Type: openapi.TypeInteger}}}), "Thing declares id now"},
 		{"a property of a schema that is not there", workarounds.UndeclaredProperties(a, map[string]map[string]*openapi.Schema{"Gone": {"id": {Type: openapi.TypeInteger}}}), "no schema Gone"},
 		{"no properties", workarounds.UndeclaredProperties(a, nil), "it names no properties"},
+		{"a named type of a property that is not there", workarounds.NamedTypes(a, "x", map[string]string{"Thing.gone": "x.T"}), "schema Thing has no property gone"},
+		{"a named type of a schema that is not there", workarounds.NamedTypes(a, "x", map[string]string{"Gone.id": "x.T"}), "no schema Gone"},
+		{"a named type without a property", workarounds.NamedTypes(a, "x", map[string]string{"Thing": "x.T"}), `"Thing" is not <schema>.<property>`},
+		{"a named type without a type", workarounds.NamedTypes(a, "x", map[string]string{"Thing.id": ""}), "Thing.id names no Go type"},
+		{"no named types", workarounds.NamedTypes(a, "x", nil), "it names no fields"},
+		{"a shape for a property that has one", workarounds.DeclaredShapes(a, map[string]*openapi.Schema{"Thing.details": {Type: openapi.TypeObject}}), "Thing.details has a shape now"},
+		{"a shape for a property that is not there", workarounds.DeclaredShapes(a, map[string]*openapi.Schema{"Thing.gone": {Type: openapi.TypeObject}}), "schema Thing has no property gone"},
+		{"a shape of nothing", workarounds.DeclaredShapes(a, map[string]*openapi.Schema{"Thing.extra": nil}), "Thing.extra has no shape"},
+		{"no shapes", workarounds.DeclaredShapes(a, nil), "it names no fields"},
 
 		{"a path that is not there", workarounds.NotAPI(a, "/", "/login"), "/login is not in the document"},
 		{"no paths", workarounds.NotAPI(a), "it names no paths"},

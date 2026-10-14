@@ -4,8 +4,10 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -15,6 +17,7 @@ import (
 	"github.com/katbyte/pandorest/generator"
 	"github.com/katbyte/pandorest/importer"
 	"github.com/katbyte/pandorest/importer/workarounds"
+	"github.com/katbyte/pandorest/jsonrpc"
 	"github.com/katbyte/pandorest/openapi"
 )
 
@@ -1080,6 +1083,204 @@ func TestJoinedLists(t *testing.T) {
 	test := read(t, dir, "items_method_getitems_test.go")
 	if !strings.Contains(test, `"v-UserId"`) || strings.Contains(test, "UserIdList:") {
 		t.Errorf("the test does not set the string alone:\n%s", test)
+	}
+}
+
+// callMethods is a description of a few JSON-RPC methods as TrueNAS writes its own: a query, a job taking a record, a method
+// answering nothing, one answering an inline record with a date and an enum, and one with an argument named as a method's
+// local is.
+const callMethods = `{
+  "config.save": {"description": "Save the configuration.", "roles": ["READONLY_ADMIN"], "filterable": false, "job": true, "downloadable": true,
+    "accepts": [{"title": "options", "type": "object", "properties": {"secretseed": {"title": "secretseed", "type": "boolean", "_name_": "secretseed", "_required_": false}}, "_name_": "options", "_required_": false}],
+    "returns": [{"title": "result", "type": "null", "_name_": "result", "_required_": true}]},
+  "config.upload": {"description": "Upload a configuration.", "roles": ["FULL_ADMIN"], "filterable": false, "job": true, "uploadable": true, "accepts": [],
+    "returns": [{"title": "result", "type": "null", "_name_": "result", "_required_": true}]},
+  "auth.login_ex": {"description": "Authenticate.", "roles": [], "filterable": false, "job": false, "item_method": false, "no_auth_required": true,
+    "accepts": [{"title": "login_data", "discriminator": {"propertyName": "mechanism"}, "oneOf": [
+      {"title": "AuthApiKeyPlain", "type": "object", "properties": {"mechanism": {"title": "mechanism", "type": "string", "const": "API_KEY_PLAIN", "enum": ["API_KEY_PLAIN"], "_name_": "mechanism", "_required_": true}, "api_key": {"title": "api_key", "type": "string", "_name_": "api_key", "_required_": true}}},
+      {"title": "AuthPasswordPlain", "type": "object", "properties": {"mechanism": {"title": "mechanism", "type": "string", "const": "PASSWORD_PLAIN", "enum": ["PASSWORD_PLAIN"], "_name_": "mechanism", "_required_": true}, "password": {"title": "password", "type": "string", "_name_": "password", "_required_": true}, "remember": {"title": "remember", "type": "boolean", "_name_": "remember", "_required_": false}}}],
+      "_name_": "login_data", "_required_": true}],
+    "returns": [{"title": "result", "type": "object", "properties": {"response_type": {"title": "response_type", "type": "string", "enum": ["SUCCESS", "AUTH_ERR"], "_name_": "response_type", "_required_": true}}, "_name_": "result", "_required_": true}]},
+  "pool.query": {"description": "Query pools.", "roles": ["POOL_READ", "READONLY_ADMIN"], "filterable": true, "job": false,
+    "accepts": [
+      {"title": "filters", "type": "array", "items": [{}], "_name_": "filters", "_required_": false},
+      {"title": "options", "type": "object", "properties": {"get": {"title": "get", "type": "boolean", "_name_": "get", "_required_": false}, "count": {"title": "count", "type": "boolean", "_name_": "count", "_required_": false}, "limit": {"title": "limit", "type": "integer", "_name_": "limit", "_required_": false}, "force_sql_filters": {"title": "force_sql_filters", "type": "boolean", "_name_": "force_sql_filters", "_required_": false}}, "_name_": "options", "_required_": false}],
+    "returns": [{"title": "result", "anyOf": [{"type": "array", "items": [{"title": "PoolEntry", "type": "object", "properties": {"id": {"title": "id", "type": "integer", "_name_": "id", "_required_": true}, "status": {"title": "status", "type": "string", "enum": ["ONLINE", ""], "_name_": "status", "_required_": true}}}]}, {"type": "integer"}], "_name_": "result", "_required_": true}]},
+  "pool.create": {"description": "Create a pool.", "roles": ["POOL_WRITE"], "filterable": false, "job": true,
+    "accepts": [{"title": "pool_create", "type": "object", "properties": {"name": {"title": "name", "type": "string", "_name_": "name", "_required_": true}}, "_name_": "pool_create", "_required_": true}, {"title": "wait", "type": "boolean", "_name_": "wait", "_required_": false}],
+    "returns": [{"title": "PoolEntry", "type": "object", "properties": {"id": {"title": "id", "type": "integer", "_name_": "id", "_required_": true}, "status": {"title": "status", "type": "string", "enum": ["ONLINE", ""], "_name_": "status", "_required_": true}}, "_name_": "result", "_required_": true}]},
+  "pool.scrub.run": {"description": "Scrub a pool.", "roles": ["POOL_WRITE"], "filterable": false, "job": false,
+    "accepts": [{"title": "name", "type": "string", "_name_": "name", "_required_": true}, {"title": "threshold", "type": "integer", "_name_": "threshold", "_required_": false}],
+    "returns": [{"title": "result", "type": "null", "_name_": "result", "_required_": true}]},
+  "system.info": {"description": "System information.", "roles": ["READONLY_ADMIN"], "filterable": false, "job": false, "accepts": [],
+    "returns": [{"title": "result", "type": "object", "properties": {"hostname": {"title": "hostname", "type": "string", "_name_": "hostname", "_required_": true}, "boottime": {"title": "boottime", "type": "string", "format": "date-time", "_name_": "boottime", "_required_": true}, "state": {"title": "state", "type": "string", "enum": ["READY", "BOOTING"], "_name_": "state", "_required_": true}}, "_name_": "result", "_required_": true}]},
+  "core.bulk": {"description": "Run a method many times.", "roles": ["READONLY_ADMIN"], "filterable": false, "job": true,
+    "accepts": [{"title": "method", "type": "string", "_name_": "method", "_required_": true}, {"title": "params", "type": "array", "items": [{"type": "array", "items": [{}]}], "_name_": "params", "_required_": true}],
+    "returns": [{"title": "result", "type": "array", "items": [{}], "_name_": "result", "_required_": true}]}
+}`
+
+func callDefinitions(t *testing.T, patches ...workarounds.Workaround) *definitions.Service {
+	t.Helper()
+
+	spec, _, err := jsonrpc.Parse([]byte(callMethods), "TrueNAS", "25.10.7")
+	if err != nil {
+		t.Fatal(err)
+	}
+	applied := make([]string, 0, len(patches))
+	for _, w := range patches {
+		if err := w.Apply(spec); err != nil {
+			t.Fatal(err)
+		}
+		applied = append(applied, w.Name())
+	}
+	svc, err := importer.FromSpec(config.Service{Name: "truenas", Package: "truenas", Naming: config.OperationIDNaming, ReadRole: "READONLY_ADMIN", TypedUnions: true, Dates: config.Dates{Send: "$date", Read: []string{"2006-01-02T15:04:05Z07:00"}}}, spec, applied, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	return svc
+}
+
+// A service of JSON-RPC methods generates a method per call that hands the method's name and its arguments, in order and
+// trimmed of those left off the end, to the Caller New takes, with a test per method recording the call; flat and grouped.
+//
+//nolint:paralleltest // writes the testdata package the other tests would remove
+func TestCalls(t *testing.T) {
+	svc := callDefinitions(t)
+	dir := generateInModule(t, svc, generator.Options{})
+	goTool(t, dir, "vet")
+	goTool(t, dir, "test")
+
+	for file, wants := range map[string][]string{
+		"client.go":                          {"type Client struct {\n\tCaller client.Caller\n}", "func New(caller client.Caller) (*Client, error) {"},
+		"pool_method_poolquery.go":           {"func (c Client) PoolQuery(ctx context.Context, filters []any, options PoolQueryOptions) (result PoolQueryResponse, err error) {", "params := client.CallParams(0, filters, options)", `err = c.Caller.Call(ctx, "pool.query", params, &result.Answer)`, "// It changes nothing on the server."},
+		"pool_method_poolcreate.go":          {"func (c Client) PoolCreate(ctx context.Context, poolCreate PoolCreate, wait bool) (result PoolCreateResponse, err error) {", "params := client.CallParams(1, poolCreate, wait)", "var answer PoolEntry", `if err = c.Caller.Call(ctx, "pool.create", params, &answer); err != nil {`, "result.PoolEntry = result.Answer", "// The server runs it as a job"},
+		"poolscrub_method_poolscrubrun.go":   {"func (c Client) PoolScrubRun(ctx context.Context, name string, threshold int) (result PoolScrubRunResponse, err error) {", `err = c.Caller.Call(ctx, "pool.scrub.run", params, nil)`},
+		"core_method_corebulk.go":            {"func (c Client) CoreBulk(ctx context.Context, method string, paramsParam [][]any) (result CoreBulkResponse, err error) {"},
+		"system_model_systeminfoanswer.go":   {"Boottime Time ", "SystemInfoAnswerState `json:\"state,omitempty\"`"},
+		"pool_constants.go":                  {"PoolEntryStatusEmpty "},
+		"pool_model_poolqueryoptions.go":     {"ForceSqlFilters *bool `json:\"force_sql_filters,omitempty\"`"}, // a flag in a record a call sends is left out unless set, as in a request body
+		"pool_method_poolqueryone.go":        {"// PoolQueryOne calls pool.query for one record", "func (c Client) PoolQueryOne(ctx context.Context, filters []any, options PoolQueryOptions) (result PoolQueryOneResponse, err error) {", `params := client.CallParams(2, filters, client.Flagged{Record: options, Flag: "get"})`, "var answer PoolEntry"},
+		"pool_method_poolquerycount.go":      {"func (c Client) PoolQueryCount(ctx context.Context, filters []any, options PoolQueryOptions) (result PoolQueryCountResponse, err error) {", `client.Flagged{Record: options, Flag: "count"}`, `c.Caller.Call(ctx, "pool.query", params, &answer)`},
+		"pool_method_poolqueryone_test.go":   {`client.Flagged{Record: PoolQueryOptions{}, Flag: "get"}}; !reflect.DeepEqual(r.params, want) {`},
+		"auth_model_authloginexlogindata.go": {"type AuthLoginExLoginData struct {\n\tclient.Union\n}", `func (u AuthLoginExLoginData) Kind() string { return u.Union.Kind("mechanism") }`, `AsAuthApiKeyPlain() (AuthApiKeyPlain, error)`, `client.UnionAs[AuthPasswordPlain](u.Union, "mechanism", "PASSWORD_PLAIN")`, `AuthApiKeyPlain (mechanism "API_KEY_PLAIN")`},
+		"auth_method_authloginex.go":         {"func (c Client) AuthLoginEx(ctx context.Context, loginData AuthLoginExLoginData) (result AuthLoginExResponse, err error) {"},
+		"config_method_configsave.go":        {"// Its answer is a file: ConfigSaveTo writes it out.", "func (c Client) ConfigSaveTo(ctx context.Context, w io.Writer, options ConfigSaveOptions) (int64, error) {", `return client.DownloadWith(ctx, c.Caller, "config.save", params, w)`},
+		"config_method_configupload.go":      {"func (c Client) ConfigUpload(ctx context.Context, files ...io.Reader) (result ConfigUploadResponse, err error) {", "return client.UploadWith(ctx, c.Caller, method, params, into, files...)", `err = send(ctx, "config.upload", params, nil)`},
+		"config_method_configupload_test.go": {`r.uploaded != "file bytes"`},
+		"config_method_configsave_test.go":   {`c.ConfigSaveTo(t.Context(), &file, ConfigSaveOptions{})`},
+		"pool_method_poolcreate_test.go":     {`if want := []any{PoolCreate{}, true}; !reflect.DeepEqual(r.params, want) {`, "// an argument the server does not insist on is left off the end when it is not set", `if want := []any{PoolCreate{}}; !reflect.DeepEqual(r.params, want) {`},
+		"doc.go":                             {"Every call goes through the client.Caller"},
+	} {
+		src := read(t, dir, file)
+		for _, want := range wants {
+			if !strings.Contains(src, want) {
+				t.Errorf("%s lacks %q:\n%s", file, want, src)
+			}
+		}
+	}
+	if src := read(t, dir, "pool_method_poolquery.go"); strings.Contains(src, "HttpResponse") || strings.Contains(src, "ExpectedStatusCodes") {
+		t.Errorf("a call's method speaks of HTTP:\n%s", src)
+	}
+	// a member of a union that is sent is a sent record, its flags left out unless set
+	members, _ := filepath.Glob(filepath.Join(dir, "*_model_authpasswordplain.go"))
+	if len(members) != 1 {
+		t.Fatalf("the union member's model = %v", members)
+	}
+	if src := read(t, dir, filepath.Base(members[0])); !regexp.MustCompile("Remember +\\*bool +`json:\"remember,omitempty\"`").MatchString(src) {
+		t.Errorf("the union member's flag is not a pointer:\n%s", src)
+	}
+
+	// a call service takes a connection, so a credential or an authorizer says nothing
+	bad := *svc
+	bad.Auth = "Bearer"
+	if _, err := generator.Render(&bad, generator.Options{ClientImport: testClient}); err == nil || !strings.Contains(err.Error(), "a service of calls takes a connection") {
+		t.Errorf("Auth on a call service = %v", err)
+	}
+
+	dir = generateInModule(t, svc, generator.Options{Grouped: true, ImportPath: "github.com/katbyte/pandorest/generator/testdata/mini"})
+	goTool(t, dir+"/...", "vet")
+	goTool(t, dir+"/...", "test")
+	// in a package per namespace the method drops the namespace, and its types keep it
+	for file, wants := range map[string][]string{
+		"client/client.go":                  {"func New(caller base.Caller) (*Client, error) {", "pool.NewClient(caller),"},
+		"pool/client.go":                    {"func NewClient(caller client.Caller) Client { return Client{Caller: caller} }"},
+		"pool/method_poolquery.go":          {"// Query calls pool.query.", "func (c Client) Query(ctx context.Context, filters []any, options truenas.PoolQueryOptions) (result truenas.PoolQueryResponse, err error) {"},
+		"pool/method_poolquery_test.go":     {"func TestOperationPoolQuery(t *testing.T) {", "c.Query(t.Context(), "},
+		"poolscrub/method_poolscrubrun.go":  {"func (c Client) Run(ctx context.Context, name string, threshold int) (result truenas.PoolScrubRunResponse, err error) {"},
+		"core/method_corebulk.go":           {"func (c Client) Bulk(ctx context.Context, method string, paramsParam [][]any) (result truenas.CoreBulkResponse, err error) {"},
+		"truenas/operation_poolscrubrun.go": {"type PoolScrubRunResponse struct {\n}"},
+	} {
+		src := read(t, dir, file)
+		for _, want := range wants {
+			if !strings.Contains(src, want) {
+				t.Errorf("%s lacks %q:\n%s", file, want, src)
+			}
+		}
+	}
+
+	// a tool calling the short name through the group's field names the method; the short name alone does not, being every namespace's
+	tools := filepath.Join(dir, "tools")
+	if err := os.MkdirAll(tools, 0o750); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(tools, "tools.go"), []byte("package tools\n\nfunc use(c *client.Client, s pool.Client) {\n\tc.Pool.Query(nil, nil, truenas.PoolQueryOptions{})\n\tc.Core.Bulk(nil, \"\", nil)\n\ts.Create(nil, nil, false)\n}\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	uncalled, total, err := generator.Uncalled(svc, tools)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := []string{"AuthLoginEx", "ConfigSave", "ConfigUpload", "PoolCreate", "PoolQueryCount", "PoolQueryOne", "PoolScrubRun", "SystemInfo"}; total != 10 || !reflect.DeepEqual(uncalled, want) {
+		t.Errorf("Uncalled = %v of %d, want %v of 10", uncalled, total, want)
+	}
+}
+
+// A field a workaround names a Go type for is held as that type, imported from where the workaround says, and the package
+// built on it still builds and passes its tests; the definitions carry the type so a diff shows it.
+//
+//nolint:paralleltest // writes the testdata package the other tests would remove
+func TestNamedTypes(t *testing.T) {
+	secrets := workarounds.NamedTypes(workarounds.About{Name: "truenas-secrets", Service: "truenas", Bug: "a read-only caller is sent ******** in place of a secret, whatever its type"}, testClient, map[string]string{
+		"SystemInfoAnswer.hostname": "client.Secret[string]",
+		"PoolEntry.status":          "client.Secret[string]",
+	})
+	svc := callDefinitions(t, secrets)
+	m := svc.Models()["SystemInfoAnswer"]
+	if m == nil {
+		t.Fatal("no SystemInfoAnswer model")
+	}
+	hostname := slices.IndexFunc(m.Fields, func(f definitions.Field) bool { return f.JSONName == "hostname" })
+	if hostname < 0 || m.Fields[hostname].Type.Type != definitions.Named || m.Fields[hostname].Type.GoType != "client.Secret[string]" || m.Fields[hostname].Type.Import != testClient || m.Fields[hostname].Type.String() != "Named(client.Secret[string])" {
+		t.Errorf("hostname = %+v", m.Fields[hostname].Type)
+	}
+	if !slices.Contains(svc.Workarounds, "truenas-secrets") {
+		t.Errorf("the workaround is not recorded: %v", svc.Workarounds)
+	}
+
+	dir := generateInModule(t, svc, generator.Options{})
+	goTool(t, dir, "vet")
+	goTool(t, dir, "test")
+	for file, wants := range map[string][]string{
+		"system_model_systeminfoanswer.go": {"Hostname client.Secret[string] `json:\"hostname,omitzero\"`", strconv.Quote(testClient)},
+		"pool_model_poolentry.go":          {"Status client.Secret[string] `json:\"status"},
+	} {
+		src := read(t, dir, file)
+		for _, want := range wants {
+			if !strings.Contains(src, want) {
+				t.Errorf("%s lacks %q:\n%s", file, want, src)
+			}
+		}
+	}
+
+	// a type from another package is imported under the qualifier it is written with
+	svc = callDefinitions(t, workarounds.NamedTypes(workarounds.About{Name: "truenas-sets", Service: "truenas", Bug: "a set is written two ways"}, "example.com/nas/rpc", map[string]string{"SystemInfoAnswer.hostname": "nasrpc.Set[string]"}))
+	files, err := generator.Render(svc, generator.Options{ClientImport: testClient})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if src := string(files["system_model_systeminfoanswer.go"]); !strings.Contains(src, "Hostname nasrpc.Set[string]") || !strings.Contains(src, `nasrpc "example.com/nas/rpc"`) {
+		t.Errorf("the type is not imported under its qualifier:\n%s", src)
 	}
 }
 

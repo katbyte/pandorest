@@ -165,6 +165,9 @@ func Render(svc *definitions.Service, opts Options) (map[string][]byte, error) {
 	sources["client.go"] = g.clientFile()
 	sources["client_test.go"] = g.testHelpersFile()
 	sources["doc.go"] = g.docFile()
+	if g.calls() {
+		sources["operations.go"] = g.operationsFile()
+	}
 	if g.datesFile() {
 		sources["time.go"] = g.timeFile()
 	}
