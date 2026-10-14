@@ -1,4 +1,4 @@
-## Unreleased
+## v0.9.0 (2026-10-13)
 
 - **A server with no OpenAPI document can be generated from its own method list.** TrueNAS is retiring its REST API and describes its JSON-RPC methods instead. The config says `Document: config.JSONRPCDocument`, and each method becomes a call with its arguments in order, grouped by namespace.
 - **The package never sees a socket.** The repository writes the connection and hands it to `New` as a `client.Caller`. A refusal from the server is a `client.CallError` with its code, name and reason.
