@@ -1198,9 +1198,25 @@ func TestCalls(t *testing.T) {
 		t.Errorf("Auth on a call service = %v", err)
 	}
 
+	// the check finds every call under its full name in one package
+	if n, err := generator.Check(svc, dir); err != nil || n != 10 {
+		t.Errorf("Check of the flat layout = %d, %v", n, err)
+	}
+
 	dir = generateInModule(t, svc, generator.Options{Grouped: true, ImportPath: "github.com/katbyte/pandorest/generator/testdata/mini"})
 	goTool(t, dir+"/...", "vet")
 	goTool(t, dir+"/...", "test")
+	// and under its short name on its own group's client in a package per namespace, where Query alone is every group's
+	if n, err := generator.Check(svc, dir); err != nil || n != 10 {
+		t.Errorf("Check of the grouped layout = %d, %v", n, err)
+	}
+	if err := os.Remove(filepath.Join(dir, "pool", "method_poolquery.go")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := generator.Check(svc, dir); err == nil || !strings.Contains(err.Error(), "1 methods missing") || !strings.Contains(err.Error(), "Query (CALL pool.query)") {
+		t.Errorf("Check without one group's method = %v", err)
+	}
+	dir = generateInModule(t, svc, generator.Options{Grouped: true, ImportPath: "github.com/katbyte/pandorest/generator/testdata/mini"})
 	// in a package per namespace the method drops the namespace, and its types keep it
 	for file, wants := range map[string][]string{
 		"client/client.go":                  {"func New(caller base.Caller) (*Client, error) {", "pool.NewClient(caller),"},

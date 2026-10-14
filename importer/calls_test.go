@@ -1,6 +1,7 @@
 package importer
 
 import (
+	"reflect"
 	"slices"
 	"strings"
 	"testing"
@@ -30,7 +31,7 @@ const methods = `{
     "accepts": [{"title": "id", "type": "integer", "_name_": "id", "_required_": true}],
     "returns": [{"title": "result", "type": "boolean", "_name_": "result", "_required_": true}]},
   "auth.login_ex": {"description": "Authenticate.", "roles": [], "filterable": false, "job": false, "no_auth_required": true,
-    "accepts": [{"title": "login_data", "discriminator": {"propertyName": "mechanism"}, "oneOf": [
+    "accepts": [{"title": "login_data", "discriminator": {"propertyName": "mechanism", "mapping": {"TOKEN_PLAIN": "#/$defs/AuthApiKeyPlain", "API_KEY_PLAIN": "#/$defs/AuthApiKeyPlain", "PASSWORD_PLAIN": "#/$defs/AuthPasswordPlain"}}, "oneOf": [
       {"title": "AuthApiKeyPlain", "type": "object", "properties": {"mechanism": {"title": "mechanism", "type": "string", "const": "API_KEY_PLAIN", "enum": ["API_KEY_PLAIN"], "_name_": "mechanism", "_required_": true}, "api_key": {"title": "api_key", "type": "string", "_name_": "api_key", "_required_": true}}},
       {"title": "AuthPasswordPlain", "type": "object", "properties": {"mechanism": {"title": "mechanism", "type": "string", "const": "PASSWORD_PLAIN", "enum": ["PASSWORD_PLAIN"], "_name_": "mechanism", "_required_": true}, "password": {"title": "password", "type": "string", "_name_": "password", "_required_": true}}}],
       "_name_": "login_data", "_required_": true}],
@@ -102,7 +103,8 @@ func TestCallOperations(t *testing.T) {
 	}
 	typed := callService(t, config.Service{Name: "truenas", Package: "truenas", Naming: config.OperationIDNaming, TypedUnions: true})
 	union := typed.Models()["AuthLoginExLoginData"]
-	if union == nil || union.Discriminator != "mechanism" || len(union.Members) != 2 || union.Members[0] != (definitions.Member{Model: "AuthApiKeyPlain", Kind: "API_KEY_PLAIN"}) || union.Members[1] != (definitions.Member{Model: "AuthPasswordPlain", Kind: "PASSWORD_PLAIN"}) || len(union.Union) != 2 {
+	// a member keeps every kind the document sends to it, in order, so two runs agree and a record of any of them is that member
+	if want := []definitions.Member{{Model: "AuthApiKeyPlain", Kinds: []string{"API_KEY_PLAIN", "TOKEN_PLAIN"}}, {Model: "AuthPasswordPlain", Kinds: []string{"PASSWORD_PLAIN"}}}; union == nil || union.Discriminator != "mechanism" || !reflect.DeepEqual(union.Members, want) || len(union.Union) != 2 {
 		t.Errorf("the login data with TypedUnions = %+v", union)
 	}
 	for _, o := range typed.Operations() {

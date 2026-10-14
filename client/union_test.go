@@ -34,6 +34,13 @@ func TestUnion(t *testing.T) {
 	if _, err := client.UnionAs[b2](u, "type", "B2"); err == nil || !strings.Contains(err.Error(), `"S3", not a "B2"`) {
 		t.Errorf("as B2 = %v", err)
 	}
+	// a member the document sends several kinds to takes a record of any of them
+	if got, err := client.UnionAs[s3](u, "type", "S3_LEGACY", "S3"); err != nil || got.Bucket != "b" {
+		t.Errorf("as one of two kinds = %+v, %v", got, err)
+	}
+	if _, err := client.UnionAs[b2](u, "type", "B2", "B2_LEGACY"); err == nil || !strings.Contains(err.Error(), `"S3", not a "B2" or "B2_LEGACY"`) {
+		t.Errorf("as neither of two kinds = %v", err)
+	}
 	if _, err := client.UnionAs[b2](u, "", ""); err == nil {
 		t.Error("a record of another shape decoded without a kind to go by")
 	}

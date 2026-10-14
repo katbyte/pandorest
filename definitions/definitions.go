@@ -263,11 +263,12 @@ type Model struct {
 // survives the package renaming it.
 const OwnItem = "$item"
 
-// Member is one record a union is one of: the model, and the value of the union's Discriminator that names it, empty where
-// the document gives none.
+// Member is one record a union is one of: the model, and the values of the union's Discriminator that name it, in order,
+// none where the document gives none; several where the document sends several kinds to one record (a mirror, a stripe and
+// three raidz levels are all one vdev record).
 type Member struct {
-	Model string `json:"Model"`
-	Kind  string `json:"Kind,omitempty"`
+	Model string   `json:"Model"`
+	Kinds []string `json:"Kinds,omitempty"`
 }
 
 // Field is one property of a model.

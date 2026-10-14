@@ -1,3 +1,8 @@
+## Unreleased
+
+- **A union member keeps every kind the document sends to it.** Where several kinds name one record, such as a mirror, a stripe and the raidz levels all being one vdev, one kind was kept at random, so two runs of the generator differed and a record of the other kinds was refused. Every kind is kept, in order, and a record of any of them is that member.
+- **`check` finds a call's method under its short name.** In a package per namespace it reported every method of a JSON-RPC service missing, since it looked for the full name. It now looks on each group's own client for the name the method is generated under, so one group's `Query` does not stand for another's.
+
 ## v0.9.0 (2026-10-13)
 
 - **A server with no OpenAPI document can be generated from its own method list.** TrueNAS is retiring its REST API and describes its JSON-RPC methods instead. The config says `Document: config.JSONRPCDocument`, and each method becomes a call with its arguments in order, grouped by namespace.
