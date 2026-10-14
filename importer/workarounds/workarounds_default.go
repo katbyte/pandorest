@@ -397,8 +397,9 @@ func UndeclaredProperties(about About, properties map[string]map[string]*openapi
 // NamedTypes is for a field the server writes in a form of its own that the document cannot describe: a secret it hides from
 // some callers behind a placeholder whatever the field's type, a list it writes two ways. Each field, named <schema>.<property>,
 // is held as the Go type given, written as a package uses it (truenasrpc.Secret[int]) and imported from importPath; the type
-// reads and writes its own JSON. client.Secret[T] is the one for a hidden value. It fails for a schema or property that is not
-// there.
+// reads and writes its own JSON. client.Secret[T] is the one for a hidden value. $item in the type stands for the field's own
+// type, or a list's element, as the package names it (truenasrpc.Set[$item]), so the workaround survives the package renaming
+// an enum. It fails for a schema or property that is not there.
 func NamedTypes(about About, importPath string, fields map[string]string) Workaround {
 	return defaultWorkaround{about, func(spec *openapi.Spec, note func(string)) error {
 		if len(fields) == 0 {

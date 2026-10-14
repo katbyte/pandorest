@@ -258,6 +258,11 @@ type Model struct {
 	WrittenWhole bool `json:"WrittenWhole,omitempty"`
 }
 
+// OwnItem is what a named type's name may say in place of the field's own type, or a list's element, as the package names it
+// (truenasrpc.Set[$item] on a list of an enum is truenasrpc.Set[ReplicationDirection]), so a type wrapping the field's own
+// survives the package renaming it.
+const OwnItem = "$item"
+
 // Member is one record a union is one of: the model, and the value of the union's Discriminator that names it, empty where
 // the document gives none.
 type Member struct {

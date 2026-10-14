@@ -1243,6 +1243,7 @@ func TestCalls(t *testing.T) {
 func TestNamedTypes(t *testing.T) {
 	secrets := workarounds.NamedTypes(workarounds.About{Name: "truenas-secrets", Service: "truenas", Bug: "a read-only caller is sent ******** in place of a secret, whatever its type"}, testClient, map[string]string{
 		"SystemInfoAnswer.hostname": "client.Secret[string]",
+		"SystemInfoAnswer.state":    "client.Secret[$item]", // the field's own enum, by whatever name the package gives it
 		"PoolEntry.status":          "client.Secret[string]",
 	})
 	svc := callDefinitions(t, secrets)
@@ -1262,7 +1263,7 @@ func TestNamedTypes(t *testing.T) {
 	goTool(t, dir, "vet")
 	goTool(t, dir, "test")
 	for file, wants := range map[string][]string{
-		"system_model_systeminfoanswer.go": {"Hostname client.Secret[string] `json:\"hostname,omitzero\"`", strconv.Quote(testClient)},
+		"system_model_systeminfoanswer.go": {"Hostname client.Secret[string]", "`json:\"hostname,omitzero\"`", "client.Secret[SystemInfoAnswerState] `json:\"state,omitzero\"`", strconv.Quote(testClient)},
 		"pool_model_poolentry.go":          {"Status client.Secret[string] `json:\"status"},
 	} {
 		src := read(t, dir, file)

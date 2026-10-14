@@ -49,11 +49,26 @@ func (im *importer) typeRef(s *openapi.Schema, owner, field string) definitions.
 		return definitions.TypeRef{Type: definitions.Any}
 	}
 	if s.GoType != nil {
-		if s.GoType.Name == "" {
+		name := s.GoType.Name
+		if name == "" {
 			im.fail(fmt.Sprintf("%s.%s: held as a Go type with no name", owner, field))
 		}
+		if strings.Contains(name, definitions.OwnItem) {
+			// the field's own type, or a list's element, as the package names it, so a type wrapping it survives a renaming
+			bare := *s
+			bare.GoType = nil
+			own := im.typeRef(&bare, owner, field)
+			if own.Type == definitions.List && own.NestedItem != nil {
+				own = *own.NestedItem
+			}
+			item, ok := ownName(own)
+			if !ok {
+				im.fail(fmt.Sprintf("%s.%s: %s stands for the field's own type, which is %s, not one a name can stand for", owner, field, definitions.OwnItem, own))
+			}
+			name = strings.ReplaceAll(name, definitions.OwnItem, item)
+		}
 
-		return definitions.TypeRef{Type: definitions.Named, GoType: s.GoType.Name, Import: s.GoType.Import}
+		return definitions.TypeRef{Type: definitions.Named, GoType: name, Import: s.GoType.Import}
 	}
 	if ref := s.RefName(); ref != "" {
 		if _, ok := im.spec.Components.Schemas[ref]; !ok {
@@ -116,6 +131,29 @@ func (im *importer) typeRef(s *openapi.Schema, owner, field string) definitions.
 
 func reference(name string) definitions.TypeRef {
 	return definitions.TypeRef{Type: definitions.Reference, ReferenceName: name}
+}
+
+// ownName is a type's name as the package writes it in a field, for a named type to stand in for: a model, enum or id by name,
+// a primitive by Go's; a date, a list, a map or raw JSON has no one name and answers false.
+func ownName(t definitions.TypeRef) (string, bool) {
+	switch t.Type {
+	case definitions.Reference, definitions.ID:
+		return t.ReferenceName, true
+	case definitions.String:
+		return "string", true
+	case definitions.Integer:
+		return "int", true
+	case definitions.Integer64:
+		return "int64", true
+	case definitions.Float:
+		return "float32", true
+	case definitions.Double:
+		return "float64", true
+	case definitions.Boolean:
+		return "bool", true
+	default:
+		return "", false
+	}
 }
 
 // importSchemas turns every component schema into a model or constant.
