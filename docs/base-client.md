@@ -1,6 +1,6 @@
 # The base client
 
-Generated code sends every request through the `client` package, after go-azure-sdk's `sdk/client`. It is built on [go-kt](https://github.com/katbyte/go-kt)'s `chttp`: a read is asked again for a dropped connection or a gateway's answer and a write is sent once, an answer is read whole up to a limit, and every exchange is traced to a logger when one is handed in, with the credentials hidden.
+Generated code sends every request through the `client` package, after go-azure-sdk's `sdk/client`. It is built on [go-kt](https://github.com/katbyte/go-kt)'s `httpc`: a read is asked again for a dropped connection or a gateway's answer and a write is sent once, an answer is read whole up to a limit, and every exchange is traced to a logger when one is handed in, with the credentials hidden.
 
 ## What a call asks for
 
@@ -28,10 +28,10 @@ var service = client.Service{
 | A service says | Without it |
 |---|---|
 | `Name`, `UserAgent`, `Example` | "the server", Go's user agent, no example address beside a refused url |
-| `SecretHeaders`, `SecretNames` | `Authorization` and `X-Api-Key` are hidden from a trace, and what chttp hides unasked |
+| `SecretHeaders`, `SecretNames` | `Authorization` and `X-Api-Key` are hidden from a trace, and what httpc hides unasked |
 | `FollowRedirects`, `RedirectAdvice`, `WebPageAdvice` | a redirect no operation documents is refused |
 | `Timeout`, `HeaderWait`, `MaxResponse` | two minutes for a request, all of it for the server to start answering, 64 MiB held |
-| `Retry` | chttp's rule: a read, three times, for a dropped connection or a 502, 503 or 504 |
+| `Retry` | httpc's rule: a read, three times, for a dropped connection or a 502, 503 or 504 |
 | `Messages`, `Note` | an error shows the start of what the server sent |
 | `SendDateAs` | every date parameter goes out in the service's first layout |
 | `Outcome` | a 200 is an answer, whatever its body says |

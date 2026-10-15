@@ -15,12 +15,12 @@ import (
 	"testing/iotest"
 	"time"
 
-	"github.com/katbyte/go-kt/chttp"
+	"github.com/katbyte/go-kt/httpc"
 	"github.com/katbyte/pandorest/client"
 )
 
 // noWait retries at once, so a test of a request tried again does not sleep.
-var noWait = client.WithRetry(chttp.Retry{Wait: func(int) time.Duration { return 0 }})
+var noWait = client.WithRetry(httpc.Retry{Wait: func(int) time.Duration { return 0 }})
 
 // arr is a service in the shape a repository declares one.
 var arr = client.Service{
@@ -337,8 +337,8 @@ func TestStatusError(t *testing.T) {
 	if got := client.Messages(err); !slices.Equal(got, []string{"Title: must not be empty", "Year: must be a year"}) {
 		t.Errorf("Messages = %q", got)
 	}
-	if client.StatusCode(err) != http.StatusBadRequest || chttp.StatusCode(fmt.Errorf("wrapped: %w", err)) != http.StatusBadRequest {
-		t.Errorf("StatusCode = %d, chttp's through a wrap = %d", client.StatusCode(err), chttp.StatusCode(fmt.Errorf("wrapped: %w", err)))
+	if client.StatusCode(err) != http.StatusBadRequest || httpc.StatusCode(fmt.Errorf("wrapped: %w", err)) != http.StatusBadRequest {
+		t.Errorf("StatusCode = %d, httpc's through a wrap = %d", client.StatusCode(err), httpc.StatusCode(fmt.Errorf("wrapped: %w", err)))
 	}
 	if se, ok := errors.AsType[*client.StatusError](err); !ok || se.Tries != 0 || se.Path != "/movie" {
 		t.Errorf("the status error = %+v", se)
