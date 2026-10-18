@@ -1,3 +1,7 @@
+## v0.13.1 (2026-10-18)
+
+- **A grouped package's tests pass staticcheck.** Their options live in another package, so every deprecated option a generated test set was a finding. The line now says why it is set.
+
 ## v0.13.0 (2026-10-18)
 
 - **The generated code passes the linters.** A repository can turn off the generated-code exclusion and lint the package it checks in like the rest of its code. Every method and test file moves on regenerate; nothing a caller wrote changes. Three checks stay for the repository to exclude for the package, as [docs/generated-code.md](docs/generated-code.md) says.

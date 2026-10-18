@@ -303,6 +303,10 @@ func TestGrouped(t *testing.T) {
 	if groups := read(t, dir, "groups.json"); !strings.Contains(groups, `"GetItems": "Items"`) || !strings.Contains(groups, `"GetItemsComplete": "Items"`) || !strings.Contains(groups, `"Package": "items"`) {
 		t.Errorf("groups.json:\n%s", groups)
 	}
+	// the group's test sets the types package's deprecated option, which staticcheck reports across packages
+	if test := read(t, dir, "items/method_getitems_test.go"); !strings.Contains(test, `"v-Old", //nolint:staticcheck // the test sets every option, deprecated ones too`) {
+		t.Errorf("items' test does not excuse the deprecated option it sets:\n%s", test)
+	}
 
 	// under a directory not named for the package (a version's), the types package is a directory of its own
 	versioned := generateInModule(t, svc, generator.Options{Grouped: true, ImportPath: "github.com/katbyte/pandorest/generator/testdata/mini", ClientService: "service", Packages: map[string]string{"Image": "images", "Sync": "syncs"}, Dir: filepath.Join("testdata", "1.0"), ClientPackage: "miniclient"})
@@ -324,6 +328,13 @@ func TestGrouped(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(flat, "items")); err == nil {
 		t.Error("the items package survived a flat regeneration")
 	}
+	if _, err := generator.Generate(svc, generator.Options{Grouped: true, ImportPath: "github.com/katbyte/pandorest/generator/testdata/mini", ClientService: "service", Packages: map[string]string{"Image": "images", "Sync": "syncs"}, Dir: flat, Definitions: "api-defs/mini", ClientImport: testClient}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(flat, "items_method_getitems.go")); err == nil {
+		t.Error("the flat method file survived a grouped regeneration")
+	}
+	writeServiceFile(t, flat)
 }
 
 // writeServiceFile writes the hand-written file a generated package needs

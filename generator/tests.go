@@ -414,7 +414,13 @@ func (g *gen) testCall(o *definitions.Operation) testCallInfo {
 			}
 			placed[opt.In+" "+opt.Name] = true
 			info.optNames[opt.Field] = opt.Name
-			fields = append(fields, opt.Field+": "+expr)
+			field := opt.Field + ": " + expr + ","
+			if opt.Deprecated && g.qual != "" {
+				// set from another package, as a group's test sets the types package's options, a deprecated option is a staticcheck
+				// finding; in the same package it is not, and a nolint nothing needs is a finding of its own
+				field += " //nolint:staticcheck // the test sets every option, deprecated ones too"
+			}
+			fields = append(fields, field)
 			switch {
 			case opt.DeepObject:
 				info.query = append(info.query, wireValue{opt.Name + "[a]", []string{"b"}}, wireValue{opt.Name + "[k]", []string{"v"}})
@@ -426,7 +432,7 @@ func (g *gen) testCall(o *definitions.Operation) testCallInfo {
 		}
 		info.options = g.typeName(o.Name) + "Options{}"
 		if len(fields) > 0 {
-			info.options = g.typeName(o.Name) + "Options{\n\t\t" + strings.Join(fields, ",\n\t\t") + ",\n\t}"
+			info.options = g.typeName(o.Name) + "Options{\n\t\t" + strings.Join(fields, "\n\t\t") + "\n\t}"
 		}
 		args = append(args, info.options)
 	}
