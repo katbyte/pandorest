@@ -12,7 +12,7 @@ sweep.Sweep{
 		"GetLiveTvTuners": {Skip: "needs a tuner"},
 		"GetItemsByIdThemeMedia": {Empty: "the fixtures have no theme songs"},
 	},
-	MissingIDs: map[string]string{"ItemID": "00000000000000000000000000000000"},
+	MissingIDs: map[string]sweep.Missing{"ItemID": {ID: "00000000000000000000000000000000", Operation: "GetItem", Want: "404"}},
 }.Run(t)
 ```
 
@@ -48,4 +48,4 @@ sweep.Sweep{
 }.Run(t)
 ```
 
-`MissingIDs` gives, per kind of id, a value of the right shape nothing has. The sweep calls the first GET whose path takes the kind with it and notes what came back: `a missing ItemID answers HTTP 404 (GET /Items/{id})`.
+`MissingIDs` gives, per kind of id, a value of the right shape nothing has, the GET to probe it through, and what the server should answer: a status such as `"404"`, or `"nothing"` for a success with nothing in it. The run fails when the answer is anything else, so a server that starts answering a missing id differently fails CI rather than changing a line in the log, and notes what it was: `a missing ItemID answers HTTP 404 (GET /Items/{id})`. Without `Operation` the probe goes through the first GET whose path takes the kind, which may be an odd route; without `Want` it only notes.

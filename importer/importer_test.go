@@ -542,6 +542,35 @@ func TestAcceptOption(t *testing.T) {
 	}
 }
 
+// A service that says its text answers are short (TextAnswers) reads every
+// text/plain answer whole into a string, except one declared binary, which is
+// a download; without the option they are all files, and other types stay
+// files either way.
+func TestTextAnswersOption(t *testing.T) {
+	t.Parallel()
+
+	spec, err := openapi.Parse([]byte(`{"openapi": "3.0.1", "info": {"title": "Mini", "version": "1"}, "paths": {
+    "/scan": {"post": {"operationId": "Scan", "tags": ["Items"], "responses": {"200": {"content": {"text/plain": {"schema": {"type": "string"}}}}}}},
+    "/ok": {"delete": {"operationId": "Delete", "tags": ["Items"], "responses": {"200": {"content": {"text/plain": {}}}}}},
+    "/log": {"get": {"operationId": "Log", "tags": ["Items"], "responses": {"200": {"content": {"text/plain": {"schema": {"type": "string", "format": "binary"}}}}}}},
+    "/cover": {"get": {"operationId": "Cover", "tags": ["Items"], "responses": {"200": {"content": {"application/octet-stream": {"schema": {"type": "string", "format": "binary"}}}}}}}}}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, textAnswers := range []bool{false, true} {
+		svc, err := FromSpec(config.Service{Name: "mini", Package: "mini", Naming: config.OperationIDNaming, Auth: "APIKey", TextAnswers: textAnswers}, spec, nil, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for name, wantText := range map[string]bool{"Scan": textAnswers, "Delete": textAnswers, "Log": false, "Cover": false} {
+			answer := (*find(svc.Operations(), func(o *definitions.Operation) bool { return o.Name == name })).Response
+			if answer.Text() != wantText || (!wantText && answer.Type.Type != definitions.RawFile) {
+				t.Errorf("TextAnswers %v: %s answers %+v, want text %v", textAnswers, name, answer, wantText)
+			}
+		}
+	}
+}
+
 // An answer a workaround says is short text is read whole into a string,
 // where any other answer that is not JSON is a file, and the call asks for
 // its type.

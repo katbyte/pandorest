@@ -639,8 +639,8 @@ func TestRun(t *testing.T) {
 		"GetPage": {Decode: true, Why: "it answers a page"},
 		"GetLost": {Skip: "its model is wrong, and a workaround is on its way"},
 	}
-	// an id nothing has is probed through the first GET that takes the kind; a kind no GET takes is said so
-	s.MissingIDs = map[string]string{"ItemID": "zz", "UserID": "u"}
+	// an id nothing has is probed through the GET named for it, with the answer it should get; a kind no GET takes is said so
+	s.MissingIDs = map[string]sweep.Missing{"ItemID": {ID: "zz", Operation: "GetItem", Want: "500"}, "UserID": {ID: "u"}}
 	s.Run(t)
 
 	// every GET but the skipped one was called, and the DELETE was not; the probe is one call more

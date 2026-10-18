@@ -39,6 +39,7 @@ A repository that vendors its dependencies takes a new pandorest in this order: 
 | `WrittenWhole` | settings schemas read and written back whole, whose empty strings and zeros are sent rather than left out |
 | `SendRequired` | a property the document requires is always sent |
 | `PreferJSON` | a response that lists JSON beside another type answers JSON, not a file |
+| `TextAnswers` | an answer labelled `text/plain` is short text read whole into a string and closed, not a file left open for the caller (Audiobookshelf answers `OK` to most writes). One declared `format: binary`, or by the `File` workaround, stays a file |
 | `ExpectSameShape` | a status outside 2xx that answers the success shape is expected, not an error |
 | `Dates`, `Days` | how the server writes a date-time and a date. `Send` is the layout a date goes out in (`config.Dates{Send: "2006-01-02T15:04:05.0000000Z07:00"}`), `Read` any others it is read in. Set, every such field and parameter is the package's `Time` or `Day`, left out when zero. A date no layout reads fails the decode naming it, or with `KeepUnread` is read as zero with its text kept. `client.DateObjectMillis` (`"$date"`) is the layout of a date written as `{"$date": milliseconds}`. A parameter wanting another layout is named in the service's own file with `SendDateAs` |
 | `IDs`, `Plain` | the kinds of id the package tells apart, each a named type over int or string (`type SeriesID int`), so the compiler refuses a series id where an episode id goes. See [ids](#ids) |

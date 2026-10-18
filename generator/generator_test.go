@@ -398,7 +398,7 @@ func TestGenerate(t *testing.T) {
 			"//\n// Dates are strings.\n//\n// Ids are too.\n//\n// # Workarounds\n",
 			"//   - mini-fix",
 			// the paged server answers in the shape the service's lists have
-			`fmt.Fprintf(w, "{\"Items\":[%s],\"TotalRecordCount\":%d}", item, total)`,
+			`fmt.Fprintf(w, "{%q:[%s],%q:%d}", items, item, total, count)`,
 		} {
 			if !strings.Contains(all, want) {
 				t.Errorf("the package lacks %q", want)
@@ -778,17 +778,20 @@ func TestPagerWithoutLimit(t *testing.T) {
 // and Day: fields left out when zero, options sent in the first layout, and
 // A service whose pages count from 0 says so with FirstPage, and its pager
 // asks for page 0 first and counts the pages it has loaded from there; the
-// generated tests expect the same.
+// generated tests expect the same. A list of the service's second paging
+// shape is tested against an answer in its own names, not the first shape's.
 //
 //nolint:paralleltest // writes the testdata package the other tests would remove
 func TestFirstPage(t *testing.T) {
 	spec, err := openapi.Parse([]byte(`{"openapi": "3.0.1", "info": {"title": "Mini", "version": "1"}, "paths": {
     "/items": {"get": {"operationId": "GetItems", "tags": ["Items"], "parameters": [{"name": "page", "in": "query", "schema": {"type": "integer"}}, {"name": "limit", "in": "query", "schema": {"type": "integer"}}],
-      "responses": {"200": {"content": {"application/json": {"schema": {"type": "object", "properties": {"results": {"type": "array", "items": {"type": "object", "properties": {"id": {"type": "integer"}}}}, "total": {"type": "integer"}}}}}}}}}}}`))
+      "responses": {"200": {"content": {"application/json": {"schema": {"type": "object", "properties": {"results": {"type": "array", "items": {"type": "object", "properties": {"id": {"type": "integer"}}}}, "total": {"type": "integer"}}}}}}}}},
+    "/sessions": {"get": {"operationId": "GetSessions", "tags": ["Items"], "parameters": [{"name": "page", "in": "query", "schema": {"type": "integer"}}, {"name": "itemsPerPage", "in": "query", "schema": {"type": "integer"}}],
+      "responses": {"200": {"content": {"application/json": {"schema": {"type": "object", "properties": {"sessions": {"type": "array", "items": {"type": "object", "properties": {"id": {"type": "integer"}}}}, "total": {"type": "integer"}}}}}}}}}}}`))
 	if err != nil {
 		t.Fatal(err)
 	}
-	cfg := config.Service{Name: "mini", Package: "mini", Naming: config.OperationIDNaming, Auth: "APIKey", Paging: &config.Paging{Start: "page", Limit: "limit", Items: "results", Total: "total", ByPage: true, FirstPage: new(0)}}
+	cfg := config.Service{Name: "mini", Package: "mini", Naming: config.OperationIDNaming, Auth: "APIKey", Paging: &config.Paging{Start: "page", Limit: "limit", Items: "results", Total: "total", ByPage: true, FirstPage: new(0)}, Pagings: []config.Paging{{Start: "page", Limit: "itemsPerPage", Items: "sessions", Total: "total", ByPage: true, FirstPage: new(0)}}}
 	svc, err := importer.FromSpec(cfg, spec, nil, nil)
 	if err != nil {
 		t.Fatal(err)
@@ -798,8 +801,9 @@ func TestFirstPage(t *testing.T) {
 	goTool(t, dir, "test")
 
 	for file, wants := range map[string][]string{
-		"items_method_getitems.go":      {"\tnumber := 0\n\tif option.Page != nil && *option.Page > 0 {\n\t\tnumber = *option.Page\n\t}\n\toption.Page = &number\n", "page.Answer.Total > 0 && (number+1)*limit >= page.Answer.Total {"},
-		"items_method_getitems_test.go": {`{"total reached", 2, 9, GetItemsOptions{Limit: new(1)}, 2, []string{"0", "1"}},`, `{"short page", 0, 9, GetItemsOptions{Limit: new(2)}, 1, []string{"0"}},`},
+		"items_method_getitems.go":         {"\tnumber := 0\n\tif option.Page != nil && *option.Page > 0 {\n\t\tnumber = *option.Page\n\t}\n\toption.Page = &number\n", "page.Answer.Total > 0 && (number+1)*limit >= page.Answer.Total {"},
+		"items_method_getitems_test.go":    {`{"total reached", 2, 9, GetItemsOptions{Limit: new(1)}, 2, []string{"0", "1"}},`, `{"short page", 0, 9, GetItemsOptions{Limit: new(2)}, 1, []string{"0"}},`, `pagedServer(t, "page", "results", "total", "{}", tc.total, tc.pages)`},
+		"items_method_getsessions_test.go": {`pagedServer(t, "page", "sessions", "total", "{}", tc.total, tc.pages)`},
 	} {
 		src := read(t, dir, file)
 		for _, want := range wants {
@@ -1291,6 +1295,19 @@ func TestCalls(t *testing.T) {
 	if want := []string{"AuthLoginEx", "ConfigSave", "ConfigUpload", "PoolCreate", "PoolQueryCount", "PoolQueryOne", "PoolScrubRun", "SystemInfo"}; total != 10 || !reflect.DeepEqual(uncalled, want) {
 		t.Errorf("Uncalled = %v of %d, want %v of 10", uncalled, total, want)
 	}
+
+	// counted through one field, only what that field's client reaches names a method: with two services in one repository, the
+	// other's call of the same name does not count, and nor does a call through no field
+	if err := os.WriteFile(filepath.Join(tools, "two.go"), []byte("package tools\n\ntype servers struct {\n\tnas, other *client.Client\n}\n\nfunc (s servers) use() {\n\ts.nas.Pool.Query(nil, nil, truenas.PoolQueryOptions{})\n\ts.other.Core.Bulk(nil, \"\", nil)\n\ts.nas.System.Info(nil)\n}\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	uncalled, total, err = generator.UncalledOn(svc, tools, "nas")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := []string{"AuthLoginEx", "ConfigSave", "ConfigUpload", "CoreBulk", "PoolCreate", "PoolQueryCount", "PoolQueryOne", "PoolScrubRun"}; total != 10 || !reflect.DeepEqual(uncalled, want) {
+		t.Errorf("UncalledOn nas = %v of %d, want %v of 10", uncalled, total, want)
+	}
 }
 
 // A field a workaround names a Go type for is held as that type, imported from where the workaround says, and the package
@@ -1424,12 +1441,12 @@ func TestGenerateServiceOptions(t *testing.T) {
 			"\t\tnumber++\n",
 		},
 		"history_method_getseriesbyseriesidhistory_test.go": {
-			`c, starts := pagedServer(t, "page", "{}", tc.total, tc.pages)`,
+			`c, starts := pagedServer(t, "page", "records", "totalRecords", "{}", tc.total, tc.pages)`,
 			`{"total reached", 2, 9, GetSeriesBySeriesIdHistoryOptions{PageSize: new(1)}, 2, []string{"1", "2"}},`,
 			`{"empty page", 0, 2, GetSeriesBySeriesIdHistoryOptions{PageSize: new(1)}, 2, []string{"1", "2", "3"}},`,
 			`{"short page", 0, 9, GetSeriesBySeriesIdHistoryOptions{PageSize: new(2)}, 1, []string{"1"}},`,
 		},
-		"client_test.go": {`fmt.Fprintf(w, "{\"records\":[%s],\"totalRecords\":%d}", item, total)`, "reporting total items, and records the page of\n// each request.", "\t\tif status >= http.StatusMultipleChoices && status < http.StatusBadRequest {\n\t\t\tw.Header().Set(\"Location\", \"/redirected\")\n\t\t}\n"},
+		"client_test.go": {`fmt.Fprintf(w, "{%q:[%s],%q:%d}", items, item, total, count)`, "reporting total items under the names the list answers\n// with, and records the page of each request.", "\t\tif status >= http.StatusMultipleChoices && status < http.StatusBadRequest {\n\t\t\tw.Header().Set(\"Location\", \"/redirected\")\n\t\t}\n"},
 		// an operation whose documented answer is a redirect expects it, and its test proves the client hands it back unfollowed
 		"authentication_method_postlogin.go":      {"\t\t\thttp.StatusFound,\n"},
 		"authentication_method_getlogout_test.go": {"c, s := newOperationServer(t, 302, \"\", \"\")", "if result.HttpResponse == nil || result.HttpResponse.StatusCode != 302 {"},
