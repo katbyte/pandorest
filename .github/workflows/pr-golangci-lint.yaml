@@ -37,3 +37,7 @@ jobs:
         with:
           install-mode: none
           args: -v
+      # what the generator writes is linted too, as the repositories that check it in would with their
+      # generated-file exclusion off
+      - name: Lint the generated packages
+        run: make lint-generated

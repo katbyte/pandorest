@@ -185,10 +185,10 @@ func TestImportGenerateCheck(t *testing.T) {
 		t.Errorf("mini's doc.go lacks its source or its notes:\n%s", doc)
 	}
 	other := listFiles(t, filepath.Join(root, "lib", "other"))
-	if src := other["client.go"]; !strings.Contains(src, `"`+config.DefaultClient+`"`) || !strings.Contains(src, "c, err := service.New(baseURL, client.APIKey(token), append(opts[:len(opts):len(opts)], client.WithSecrets(token))...)") {
+	if src := other["client.go"]; !strings.Contains(src, `"`+config.DefaultClient+`"`) || !strings.Contains(src, "c, err := service.New(baseURL, client.APIKey(token), append(slices.Clip(opts), client.WithSecrets(token))...)") {
 		t.Errorf("other's client.go is not built on pandorest's client, with its auth, the service's way:\n%s", src)
 	}
-	if src := mini["client.go"]; !strings.Contains(src, "c, err := client.New(baseURL, client.Token(token), append(opts[:len(opts):len(opts)], client.WithSecrets(token))...)") {
+	if src := mini["client.go"]; !strings.Contains(src, "c, err := client.New(baseURL, client.Token(token), append(slices.Clip(opts), client.WithSecrets(token))...)") {
 		t.Errorf("mini's client.go is not built on its own base client:\n%s", src)
 	}
 	if _, ok := other["things_method_deletethingsbyid.go"]; !ok {

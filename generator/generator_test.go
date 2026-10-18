@@ -116,15 +116,23 @@ const testClient = config.DefaultClient
 func generateInModule(t *testing.T, svc *definitions.Service, opts generator.Options) string {
 	t.Helper()
 
+	// kept when asked, each flat package under the test's own name, for the lint of what the generator writes (make lint-generated);
+	// a grouped package stays at testdata/mini, which its import path names
+	keep := os.Getenv("PANDOREST_KEEP_TESTDATA") != ""
 	if opts.Dir == "" {
 		opts.Dir = filepath.Join("testdata", "mini")
+		if keep && !opts.Grouped {
+			opts.Dir = filepath.Join("testdata", strings.ToLower(t.Name()))
+		}
 	}
 	opts.Definitions = "api-defs/mini"
 	opts.ClientImport = testClient
 	if err := os.RemoveAll(opts.Dir); err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { _ = os.RemoveAll("testdata") })
+	if !keep {
+		t.Cleanup(func() { _ = os.RemoveAll("testdata") })
+	}
 	if _, err := generator.Generate(svc, opts); err != nil {
 		t.Fatal(err)
 	}
@@ -215,7 +223,7 @@ func TestTextAnswer(t *testing.T) {
 	goTool(t, dir, "test")
 
 	method := read(t, dir, "sync_method_getname.go")
-	for _, want := range []string{"// The operation answers text (text/plain), which Answer holds as it was sent.", "\tAnswer       *string\n", `Accept: "text/plain",`, "if err = resp.Text(result.Answer); err != nil {"} {
+	for _, want := range []string{"// The operation answers text (text/plain), which Answer holds as it was sent.", "\tAnswer       *string\n", `Accept: "text/plain",`, "if err := resp.Text(result.Answer); err != nil {"} {
 		if !strings.Contains(method, want) {
 			t.Errorf("GetName has no %q:\n%s", want, method)
 		}
@@ -265,7 +273,7 @@ func TestGrouped(t *testing.T) {
 
 	// the types package names everything a caller spells, with the base client's helpers under its own name
 	root := read(t, dir, "operation_getitems.go") + read(t, dir, "helpers.go") + read(t, dir, "client.go")
-	for _, want := range []string{"type GetItemsOptions struct {", "type GetItemsResponse struct {", "type GetItemsCompleteResult struct {", "type Option = client.Option", "func IsNotFound(err error) bool { return client.IsNotFound(err) }", "func New(baseURL, token string, opts ...client.Option) (*client.Client, error) {", "return service.New(baseURL, client.Bearer(token), append(opts[:len(opts):len(opts)], client.WithSecrets(token))...)"} {
+	for _, want := range []string{"type GetItemsOptions struct {", "type GetItemsResponse struct {", "type GetItemsCompleteResult struct {", "type Option = client.Option", "func IsNotFound(err error) bool { return client.IsNotFound(err) }", "func New(baseURL, token string, opts ...client.Option) (*client.Client, error) {", "return service.New(baseURL, client.Bearer(token), append(slices.Clip(opts), client.WithSecrets(token))...)"} {
 		if !strings.Contains(root, want) {
 			t.Errorf("the types package lacks %q", want)
 		}
@@ -306,9 +314,13 @@ func TestGrouped(t *testing.T) {
 	if method := read(t, versioned, "items/method_getitems.go"); !strings.Contains(method, `"github.com/katbyte/pandorest/generator/testdata/mini/mini"`) {
 		t.Errorf("versioned: items does not import the types package under the version:\n%s", method)
 	}
+	// it imports testdata/mini as the last test to write there left it, so it is not kept for the lint
+	if err := os.RemoveAll(versioned); err != nil {
+		t.Fatal(err)
+	}
 
 	// regenerating flat on top removes the packages, and grouped on top of flat the prefixed files
-	flat := generateInModule(t, svc, generator.Options{ClientService: "service"})
+	flat := generateInModule(t, svc, generator.Options{Dir: filepath.Join("testdata", "mini")})
 	if _, err := os.Stat(filepath.Join(flat, "items")); err == nil {
 		t.Error("the items package survived a flat regeneration")
 	}
@@ -365,8 +377,8 @@ func TestGenerate(t *testing.T) {
 			"func (c Client) GetItemImage(ctx context.Context, itemId string, imageType Kind, index int) (result GetItemImageResponse, err error) {",
 			"func (c Client) SetItemImage(ctx context.Context, itemId string, imageType Kind, index int, input io.Reader, contentType string) (result SetItemImageResponse, err error) {",
 			"func (c Client) PutSync(ctx context.Context, jobId int64, ratio float64, input []Item) (result PutSyncResponse, err error) {",
-			`fmt.Sprintf("/Items/%s/Images/%s/%d", url.PathEscape(itemId), url.PathEscape(string(imageType)), index),`,
-			`fmt.Sprintf("/Sync/%d/%s", jobId, strconv.FormatFloat(ratio, 'f', -1, 64))`,
+			`"/Items/" + url.PathEscape(itemId) + "/Images/" + url.PathEscape(string(imageType)) + "/" + strconv.Itoa(index),`,
+			`"/Sync/" + strconv.FormatInt(jobId, 10) + "/" + strconv.FormatFloat(ratio, 'f', -1, 64)`,
 			"StreamResponse: true,",
 			`Accept: "image/*",`,
 			"http.StatusNoContent,",
@@ -390,7 +402,7 @@ func TestGenerate(t *testing.T) {
 			"type Union = json.RawMessage",
 			"type Linux struct{}",
 			// the default client.go: the base client's authorizer the service's Auth names
-			"func New(baseURL, token string, opts ...client.Option) (*Client, error) {", "c, err := client.New(baseURL, client.Bearer(token), append(opts[:len(opts):len(opts)], client.WithSecrets(token))...)", "// Client is a client for Mini; each of its operations is a method.",
+			"func New(baseURL, token string, opts ...client.Option) (*Client, error) {", "c, err := client.New(baseURL, client.Bearer(token), append(slices.Clip(opts), client.WithSecrets(token))...)", "// Client is a client for Mini; each of its operations is a method.",
 			`const APIVersion = "1"`,
 			// the package documentation: the base client, how the lists page, the service's notes, the workarounds
 			"// under common_. The requests go through the hand-written base client,\n// " + testClient + ".\n",
@@ -474,6 +486,10 @@ func TestGenerate(t *testing.T) {
 			t.Errorf("the hand-written doc.go was changed: %q, %v", got, err)
 		}
 		if err := os.Remove(doc); err != nil {
+			t.Fatal(err)
+		}
+		// and with it gone, generation writes its own again
+		if _, err := generator.Generate(svc, generator.Options{Dir: dir, ClientImport: testClient}); err != nil {
 			t.Fatal(err)
 		}
 	})
@@ -661,7 +677,7 @@ func TestNewInTheServicesWords(t *testing.T) {
 	for _, want := range []string{
 		"// New returns a client for the Arr server at baseURL (scheme and host, plus\n// the URL base when it is set up with one) that authenticates with the API\n// key from Settings > General.\nfunc New(baseURL, apiKey string, opts ...client.Option) (*Client, error) {\n",
 		"\tif apiKey == \"\" {\n\t\treturn nil, errors.New(\"API key is required\")\n\t}\n",
-		"c, err := client.New(baseURL, client.Bearer(apiKey), append(opts[:len(opts):len(opts)], client.WithSecrets(apiKey))...)",
+		"c, err := client.New(baseURL, client.Bearer(apiKey), append(slices.Clip(opts), client.WithSecrets(apiKey))...)",
 	} {
 		if !strings.Contains(src, want) {
 			t.Errorf("client.go lacks %q:\n%s", want, src)
@@ -727,7 +743,7 @@ func TestInlineSingleOptions(t *testing.T) {
 	goTool(t, dir, "test")
 
 	for file, wants := range map[string][]string{
-		"items_method_getlookup.go": {"func (c Client) GetLookup(ctx context.Context, term ...string) (result GetLookupResponse, err error) {", `err = fmt.Errorf("GetLookup takes one term at most, not %d", len(term))`, "option.Term = term[0]", "OptionsObject: option,"},
+		"items_method_getlookup.go": {"func (c Client) GetLookup(ctx context.Context, term ...string) (result GetLookupResponse, err error) {", `return result, fmt.Errorf("GetLookup takes one term at most, not %d", len(term))`, "option.Term = term[0]", "OptionsObject: option,"},
 		"items_method_postforce.go": {"func (c Client) PostForce(ctx context.Context, forceSave ...bool) (", "option.ForceSave = &forceSave[0]"},
 		"items_method_getseason.go": {"func (c Client) GetSeason(ctx context.Context, seasonNumber int) (", "option.SeasonNumber = &seasonNumber\n"},
 		"items_method_getbyids.go":  {"func (c Client) GetByIds(ctx context.Context, ids ...string) (", "if len(ids) > 0 {\n\t\toption.Ids = ids\n\t}"},
@@ -943,7 +959,7 @@ func TestSendDateAs(t *testing.T) {
 	}
 	goTool(t, dir, "vet")
 	goTool(t, dir, "test")
-	if src := read(t, dir, "time.go"); !strings.Contains(src, "\tUnread string\n") || !strings.Contains(src, "func (t Time) UnreadDate() string { return t.Unread }") || !strings.Contains(src, "if errors.As(err, &unread) {") || strings.Contains(src, "func (t Day) UnreadDate()") {
+	if src := read(t, dir, "time.go"); !strings.Contains(src, "\tUnread string\n") || !strings.Contains(src, "func (t Time) UnreadDate() string { return t.Unread }") || !strings.Contains(src, "if unread, ok := errors.AsType[*client.UnreadDateError](err); ok {") || strings.Contains(src, "func (t Day) UnreadDate()") {
 		t.Errorf("time.go with KeepUnread on dates alone:\n%s", src)
 	}
 
@@ -996,8 +1012,8 @@ func TestUnixDates(t *testing.T) {
 		"time.go":                         {"type Unix struct{ time.Time }", "type UnixMilli struct{ time.Time }", "return json.Marshal(t.Unix())", "t.Time = time.UnixMilli(n).UTC()", "func (t Unix) String() string { return strconv.FormatInt(t.Unix(), 10) }"},
 		"events_model_event.go":           {"Timestamp Unix      `json:\"timestamp,omitzero\"`", "At        UnixMilli `json:\"at,omitzero\"`", "Count     int       `json:\"count,omitempty\"`"},
 		"events_method_getevents.go":      {"Since Unix", "if !o.Since.IsZero() {\n\t\tout.Append(\"since\", o.Since.String())"},
-		"events_method_geteventat.go":     {"func (c Client) GetEventAt(ctx context.Context, at UnixMilli) (", "at.String())"},
-		"events_method_geteventstream.go": {"func (r GetEventStreamResponse) Reader() (io.ReadCloser, string) {", "func (r GetEventStreamResponse) ContentLength() int64 {"},
+		"events_method_geteventat.go":     {"func (c Client) GetEventAt(ctx context.Context, at UnixMilli) (", "+ at.String(),"},
+		"events_method_geteventstream.go": {"func (r GetEventStreamResponse) Reader() (body io.ReadCloser, contentType string) {", "func (r GetEventStreamResponse) ContentLength() int64 {"},
 	} {
 		src := read(t, dir, file)
 		for _, want := range wants {
@@ -1034,7 +1050,7 @@ func TestIDs(t *testing.T) {
 		{Name: "ItemID", Of: []string{"Item"}, Names: []string{"itemId"}, Shape: "^[0-9a-f]{4}$", Example: "0a1b"},
 		{Name: "UserID", Base: "string", Names: []string{"userId"}},
 		// a shape the sampler's 1 and 2 do not match, so a generated test of a list must use the example or refuse its own call
-		{Name: "TagID", Base: "int", Names: []string{"tags", "tagIds"}, Shape: "^[7-9][0-9]*$", Example: "7"},
+		{Name: "TagID", Base: "int", Names: []string{"tags", "tagIds"}, Shape: `^[5-9]\d*$`, Example: "7"},
 	}}
 	svc, err := importer.FromSpec(cfg, spec, nil, nil)
 	if err != nil {
@@ -1087,7 +1103,7 @@ func TestShape(t *testing.T) {
 		"series_method_getseries.go":     {"Ids    []SeriesID", "TagIds []TagID", `out.Append("ids", client.Joined(o.Ids))`, `out.Append("tagIds", strconv.Itoa(int(v)))`},
 		// a list of a shaped kind is filled with its example, not 1 and 2, or the method refuses the call before the wire is seen
 		"series_method_getseries_test.go": {"TagIds: []TagID{TagID(7), TagID(7)}"},
-		"items_method_getitem.go":         {"func (c Client) GetItem(ctx context.Context, itemId ItemID, options ...GetItemOptions) (", "if err = itemId.Check(); err != nil {", `url.PathEscape(string(itemId))`, `if o.UserId != "" {`, `out.Append("userId", string(o.UserId))`},
+		"items_method_getitem.go":         {"func (c Client) GetItem(ctx context.Context, itemId ItemID, options ...GetItemOptions) (", "if err := itemId.Check(); err != nil {", `url.PathEscape(string(itemId))`, `if o.UserId != "" {`, `out.Append("userId", string(o.UserId))`},
 		"items_model_item.go":             {"Id     ItemID `json:\"id,omitempty\"`", "UserId UserID `json:\"userId,omitempty\"`"},
 	} {
 		src := read(t, dir, file)
@@ -1199,7 +1215,7 @@ func TestCalls(t *testing.T) {
 	for file, wants := range map[string][]string{
 		"client.go":                          {"type Client struct {\n\tCaller client.Caller\n}", "func New(caller client.Caller) (*Client, error) {"},
 		"pool_method_poolquery.go":           {"func (c Client) PoolQuery(ctx context.Context, filters []any, options PoolQueryOptions) (result PoolQueryResponse, err error) {", "params := client.CallParams(0, filters, options)", `err = c.Caller.Call(ctx, "pool.query", params, &result.Answer)`, "// It changes nothing on the server."},
-		"pool_method_poolcreate.go":          {"func (c Client) PoolCreate(ctx context.Context, poolCreate PoolCreate, wait bool) (result PoolCreateResponse, err error) {", "params := client.CallParams(1, poolCreate, wait)", "var answer PoolEntry", `if err = c.Caller.Call(ctx, "pool.create", params, &answer); err != nil {`, "result.PoolEntry = result.Answer", "// The server runs it as a job"},
+		"pool_method_poolcreate.go":          {"func (c Client) PoolCreate(ctx context.Context, poolCreate PoolCreate, wait bool) (result PoolCreateResponse, err error) {", "params := client.CallParams(1, poolCreate, wait)", "var answer PoolEntry", `if err := c.Caller.Call(ctx, "pool.create", params, &answer); err != nil {`, "result.PoolEntry = result.Answer", "// The server runs it as a job"},
 		"poolscrub_method_poolscrubrun.go":   {"func (c Client) PoolScrubRun(ctx context.Context, name string, threshold int) (result PoolScrubRunResponse, err error) {", `err = c.Caller.Call(ctx, "pool.scrub.run", params, nil)`},
 		"core_method_corebulk.go":            {"func (c Client) CoreBulk(ctx context.Context, method string, paramsParam [][]any) (result CoreBulkResponse, err error) {"},
 		"system_model_systeminfoanswer.go":   {"Boottime Time ", "SystemInfoAnswerState `json:\"state,omitempty\"`"},
@@ -1270,7 +1286,7 @@ func TestCalls(t *testing.T) {
 		"pool/method_poolquery_test.go":     {"func TestOperationPoolQuery(t *testing.T) {", "c.Query(t.Context(), "},
 		"poolscrub/method_poolscrubrun.go":  {"func (c Client) Run(ctx context.Context, name string, threshold int) (result truenas.PoolScrubRunResponse, err error) {"},
 		"core/method_corebulk.go":           {"func (c Client) Bulk(ctx context.Context, method string, paramsParam [][]any) (result truenas.CoreBulkResponse, err error) {"},
-		"truenas/operation_poolscrubrun.go": {"type PoolScrubRunResponse struct {\n}"},
+		"truenas/operation_poolscrubrun.go": {"type PoolScrubRunResponse struct{}\n"},
 	} {
 		src := read(t, dir, file)
 		for _, want := range wants {
@@ -1369,12 +1385,12 @@ func TestOperationsTable(t *testing.T) {
 		t.Fatal(err)
 	}
 	src := string(files["operations.go"])
-	for _, want := range []string{"type OperationInfo struct {", "var Operations = []OperationInfo{", `{Name: "GetItems", Method: "GET", Path: "/Items", Group: "Items", Read: true, Job: false, Form: "", File: ""},`} {
+	for _, want := range []string{"type OperationInfo struct {", "var Operations = []OperationInfo{", `{Name: "GetItems", Method: "GET", Path: "/Items", Group: "Items", Read: true},`} {
 		if !strings.Contains(src, want) {
 			t.Errorf("operations.go lacks %q:\n%s", want, src)
 		}
 	}
-	if !regexp.MustCompile(`Method: "(POST|PUT|DELETE)", Path: "[^"]+", Group: "[A-Za-z]+", Read: false`).MatchString(src) {
+	if !regexp.MustCompile(`Method: "(POST|PUT|DELETE)", Path: "[^"]+", Group: "[A-Za-z]+"},`).MatchString(src) {
 		t.Errorf("no write in the table:\n%s", src)
 	}
 }
@@ -1449,9 +1465,9 @@ func TestGenerateServiceOptions(t *testing.T) {
 		"client_test.go": {`fmt.Fprintf(w, "{%q:[%s],%q:%d}", items, item, total, count)`, "reporting total items under the names the list answers\n// with, and records the page of each request.", "\t\tif status >= http.StatusMultipleChoices && status < http.StatusBadRequest {\n\t\t\tw.Header().Set(\"Location\", \"/redirected\")\n\t\t}\n"},
 		// an operation whose documented answer is a redirect expects it, and its test proves the client hands it back unfollowed
 		"authentication_method_postlogin.go":      {"\t\t\thttp.StatusFound,\n"},
-		"authentication_method_getlogout_test.go": {"c, s := newOperationServer(t, 302, \"\", \"\")", "if result.HttpResponse == nil || result.HttpResponse.StatusCode != 302 {"},
+		"authentication_method_getlogout_test.go": {"c, s := newOperationServer(t, 302, \"\", \"\")", "if result.HttpResponse == nil || result.HttpResponse.StatusCode != http.StatusFound {"},
 		"indexer_method_postindexertestall.go":    {"\t\t\thttp.StatusOK,\n\t\t\thttp.StatusBadRequest,\n"},
-		"client.go":                               {`const APIVersion = "3.0.0"`, `const DocumentVersion = "5.0.1.9"`, "c, err := service.New(baseURL, client.APIKey(token), append(opts[:len(opts):len(opts)], client.WithSecrets(token))...)"},
+		"client.go":                               {`const APIVersion = "3.0.0"`, `const DocumentVersion = "5.0.1.9"`, "c, err := service.New(baseURL, client.APIKey(token), append(slices.Clip(opts), client.WithSecrets(token))...)"},
 	} {
 		src := read(t, dir, file)
 		for _, want := range wants {
@@ -1511,8 +1527,8 @@ func TestCommands(t *testing.T) {
 	goTool(t, dir, "test")
 
 	for file, wants := range map[string][]string{
-		"command_method_refreshseries.go": {"func (c Client) RefreshSeries(ctx context.Context, input RefreshSeriesCommand) (result RefreshSeriesResponse, err error) {", "\tinput.Name = \"RefreshSeries\"\n", "func (c Client) RefreshSeriesAndWait(ctx context.Context, input RefreshSeriesCommand, wait time.Duration) (result GetCommandByIdResponse, err error) {", "return c.WaitForCommand(ctx, int(queued.Answer.Id), wait)"},
-		"command_method_postcommand.go":   {"func (c Client) WaitForCommand(ctx context.Context, id int, wait time.Duration) (result GetCommandByIdResponse, err error) {", `if slices.Contains([]string{"failed", "aborted"}, status) {`, `if slices.Contains([]string{"completed", "failed", "aborted"}, status) {`, "string(result.Answer.Message)", `string(result.Answer.Name)`, "client.ErrCommandFailed)", "client.ErrCommandRunning)"},
+		"command_method_refreshseries.go": {"func (c Client) RefreshSeries(ctx context.Context, input RefreshSeriesCommand) (result RefreshSeriesResponse, err error) {", "\tinput.Name = \"RefreshSeries\"\n", "func (c Client) RefreshSeriesAndWait(ctx context.Context, input RefreshSeriesCommand, wait time.Duration) (result GetCommandByIdResponse, err error) {", "return c.WaitForCommand(ctx, queued.Answer.Id, wait)"},
+		"command_method_postcommand.go":   {"func (c Client) WaitForCommand(ctx context.Context, id int, wait time.Duration) (result GetCommandByIdResponse, err error) {", `if slices.Contains([]string{"failed", "aborted"}, status) {`, `if slices.Contains([]string{"completed", "failed", "aborted"}, status) {`, "id, result.Answer.Name, status, result.Answer.Message, client.ErrCommandFailed)", "client.ErrCommandRunning)"},
 		"command_model_rsssynccommand.go": {"type RssSyncCommand struct {", "Name string `json:\"name,omitempty\"`"},
 	} {
 		src := read(t, dir, file)
