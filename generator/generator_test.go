@@ -61,6 +61,10 @@ const miniSpec = `{
           {"name": "index", "in": "path", "schema": {"type": "integer"}}],
         "requestBody": {"content": {"image/*": {"schema": {"type": "string", "format": "binary"}}}},
         "responses": {"204": {"description": "ok"}}}},
+    "/Items/{itemId}/Tracks/{trackId}": {"get": {"operationId": "GetItemTrack", "tags": ["Items"], "parameters": [
+          {"name": "itemId", "in": "path", "schema": {"type": "string"}},
+          {"name": "trackId", "in": "path", "schema": {"type": "string"}}],
+        "responses": {"200": {"content": {"application/json": {"schema": {"$ref": "#/components/schemas/Item"}}}}}}},
     "/Sync/{jobId}/{ratio}": {"put": {"operationId": "PutSync", "tags": ["Sync"], "parameters": [
           {"name": "jobId", "in": "path", "schema": {"type": "integer", "format": "int64"}},
           {"name": "ratio", "in": "path", "schema": {"type": "number"}}],
@@ -72,7 +76,9 @@ const miniSpec = `{
     "/Union": {"post": {"operationId": "PostUnion", "tags": ["Sync"],
         "requestBody": {"content": {"application/json": {"schema": {"$ref": "#/components/schemas/Union"}}}},
         "responses": {"200": {"content": {"application/json": {"schema": {"$ref": "#/components/schemas/Union"}}}}}}},
-    "/Linux": {"get": {"operationId": "GetLinux", "tags": ["Sync"], "responses": {"200": {"content": {"application/json": {"schema": {"$ref": "#/components/schemas/Linux"}}}}}}}
+    "/Linux": {"get": {"operationId": "GetLinux", "tags": ["Sync"], "responses": {"200": {"content": {"application/json": {"schema": {"$ref": "#/components/schemas/Linux"}}}}}}},
+    "/Search": {"get": {"operationId": "Search", "tags": ["Items"], "parameters": [{"name": "term", "in": "query", "schema": {"type": "string"}}],
+        "responses": {"200": {"content": {"application/json": {"schema": {"$ref": "#/components/schemas/QueryResult"}}}}}}}
   },
   "components": {"schemas": {
     "Kind": {"type": "string", "enum": ["Movie", "Series"]},
@@ -82,7 +88,8 @@ const miniSpec = `{
       "Id": {"type": "string"}, "IsFolder": {"type": "boolean", "nullable": true}, "Parent": {"$ref": "#/components/schemas/Item"},
       "Kind": {"$ref": "#/components/schemas/Kind"}, "Children": {"type": "array", "items": {"$ref": "#/components/schemas/Item"}},
       "Blur": {"type": "object", "properties": {"Primary": {"type": "object", "additionalProperties": {"type": "string"}}}},
-      "Rating": {"type": "number", "format": "float"}, "Season": {"type": "integer", "nullable": true}, "Episode": {"type": "integer", "nullable": true}}},
+      "Rating": {"type": "number", "format": "float"}, "Season": {"type": "integer", "nullable": true}, "Episode": {"type": "integer", "nullable": true},
+      "Bitrate": {"type": "integer", "description": "Deprecated, please use Rating instead"}}},
     "QueryResult": {"type": "object", "properties": {"Items": {"type": "array", "items": {"$ref": "#/components/schemas/Item"}}, "TotalRecordCount": {"type": "integer"}}}
   }}
 }`
@@ -385,6 +392,12 @@ func TestGenerate(t *testing.T) {
 			"func (c Client) GetItemsComplete(ctx context.Context, options ...GetItemsOptions) (result GetItemsCompleteResult, err error) {",
 			"func (c Client) GetItem(ctx context.Context, itemId string) (result GetItemResponse, err error) {",
 			"func (c Client) UpdateItem(ctx context.Context, itemId string, input Item) (result UpdateItemResponse, err error) {",
+			// neighbours of one type are written together, as gocritic's paramTypeCombine wants
+			"func (c Client) GetItemTrack(ctx context.Context, itemId, trackId string) (result GetItemTrackResponse, err error) {",
+			// an error does not open with the operation's name, which staticcheck reads as a capitalised message when the name is one word
+			`return result, fmt.Errorf("at most one options struct for Search, not %d", len(options))`,
+			// the document's own deprecation wording becomes Go's
+			"\t// Deprecated: please use Rating instead\n\tBitrate",
 			"func (c Client) GetItemImage(ctx context.Context, itemId string, imageType Kind, index int) (result GetItemImageResponse, err error) {",
 			"func (c Client) SetItemImage(ctx context.Context, itemId string, imageType Kind, index int, input io.Reader, contentType string) (result SetItemImageResponse, err error) {",
 			"func (c Client) PutSync(ctx context.Context, jobId int64, ratio float64, input []Item) (result PutSyncResponse, err error) {",
@@ -754,7 +767,7 @@ func TestInlineSingleOptions(t *testing.T) {
 	goTool(t, dir, "test")
 
 	for file, wants := range map[string][]string{
-		"items_method_getlookup.go": {"func (c Client) GetLookup(ctx context.Context, term ...string) (result GetLookupResponse, err error) {", `return result, fmt.Errorf("GetLookup takes one term at most, not %d", len(term))`, "option.Term = term[0]", "OptionsObject: option,"},
+		"items_method_getlookup.go": {"func (c Client) GetLookup(ctx context.Context, term ...string) (result GetLookupResponse, err error) {", `return result, fmt.Errorf("at most one term for GetLookup, not %d", len(term))`, "option.Term = term[0]", "OptionsObject: option,"},
 		"items_method_postforce.go": {"func (c Client) PostForce(ctx context.Context, forceSave ...bool) (", "option.ForceSave = &forceSave[0]"},
 		"items_method_getseason.go": {"func (c Client) GetSeason(ctx context.Context, seasonNumber int) (", "option.SeasonNumber = &seasonNumber\n"},
 		"items_method_getbyids.go":  {"func (c Client) GetByIds(ctx context.Context, ids ...string) (", "if len(ids) > 0 {\n\t\toption.Ids = ids\n\t}"},
@@ -1181,6 +1194,9 @@ const callMethods = `{
   "pool.create": {"description": "Create a pool.", "roles": ["POOL_WRITE"], "filterable": false, "job": true,
     "accepts": [{"title": "pool_create", "type": "object", "properties": {"name": {"title": "name", "type": "string", "_name_": "name", "_required_": true}}, "_name_": "pool_create", "_required_": true}, {"title": "wait", "type": "boolean", "_name_": "wait", "_required_": false}],
     "returns": [{"title": "PoolEntry", "type": "object", "properties": {"id": {"title": "id", "type": "integer", "_name_": "id", "_required_": true}, "status": {"title": "status", "type": "string", "enum": ["ONLINE", ""], "_name_": "status", "_required_": true}}, "_name_": "result", "_required_": true}]},
+  "pool.set_quota": {"description": "Set quotas.", "roles": ["POOL_WRITE"], "filterable": false, "job": false,
+    "accepts": [{"title": "name", "type": "string", "_name_": "name", "_required_": true}, {"title": "quotas", "type": "array", "items": [{"title": "PoolQuota", "type": "object", "properties": {"quota_type": {"title": "quota_type", "type": "string", "_name_": "quota_type", "_required_": true}}}], "_name_": "quotas", "_required_": true}],
+    "returns": [{"title": "result", "type": "null", "_name_": "result", "_required_": true}]},
   "pool.scrub.run": {"description": "Scrub a pool.", "roles": ["POOL_WRITE"], "filterable": false, "job": false,
     "accepts": [{"title": "name", "type": "string", "_name_": "name", "_required_": true}, {"title": "threshold", "type": "integer", "_name_": "threshold", "_required_": false}],
     "returns": [{"title": "result", "type": "null", "_name_": "result", "_required_": true}]},
@@ -1228,6 +1244,7 @@ func TestCalls(t *testing.T) {
 		"pool_method_poolquery.go":           {"func (c Client) PoolQuery(ctx context.Context, filters []any, options PoolQueryOptions) (result PoolQueryResponse, err error) {", "params := client.CallParams(0, filters, options)", `err = c.Caller.Call(ctx, "pool.query", params, &result.Answer)`, "// It changes nothing on the server."},
 		"pool_method_poolcreate.go":          {"func (c Client) PoolCreate(ctx context.Context, poolCreate PoolCreate, wait bool) (result PoolCreateResponse, err error) {", "params := client.CallParams(1, poolCreate, wait)", "var answer PoolEntry", `if err := c.Caller.Call(ctx, "pool.create", params, &answer); err != nil {`, "result.PoolEntry = result.Answer", "// The server runs it as a job"},
 		"poolscrub_method_poolscrubrun.go":   {"func (c Client) PoolScrubRun(ctx context.Context, name string, threshold int) (result PoolScrubRunResponse, err error) {", `err = c.Caller.Call(ctx, "pool.scrub.run", params, nil)`},
+		"pool_method_poolsetquota_test.go":   {`c.PoolSetQuota(t.Context(), "v-Arg", []PoolQuota{{}})`}, // a list of records as gofmt -s writes it
 		"core_method_corebulk.go":            {"func (c Client) CoreBulk(ctx context.Context, method string, paramsParam [][]any) (result CoreBulkResponse, err error) {"},
 		"system_model_systeminfoanswer.go":   {"Boottime Time ", "SystemInfoAnswerState `json:\"state,omitempty\"`"},
 		"pool_constants.go":                  {"PoolEntryStatusEmpty "},
@@ -1271,7 +1288,7 @@ func TestCalls(t *testing.T) {
 	}
 
 	// the check finds every call under its full name in one package
-	if n, err := generator.Check(svc, dir); err != nil || n != 10 {
+	if n, err := generator.Check(svc, dir); err != nil || n != 11 {
 		t.Errorf("Check of the flat layout = %d, %v", n, err)
 	}
 
@@ -1279,7 +1296,7 @@ func TestCalls(t *testing.T) {
 	goTool(t, dir+"/...", "vet")
 	goTool(t, dir+"/...", "test")
 	// and under its short name on its own group's client in a package per namespace, where Query alone is every group's
-	if n, err := generator.Check(svc, dir); err != nil || n != 10 {
+	if n, err := generator.Check(svc, dir); err != nil || n != 11 {
 		t.Errorf("Check of the grouped layout = %d, %v", n, err)
 	}
 	if err := os.Remove(filepath.Join(dir, "pool", "method_poolquery.go")); err != nil {
@@ -1319,8 +1336,8 @@ func TestCalls(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if want := []string{"AuthLoginEx", "ConfigSave", "ConfigUpload", "PoolCreate", "PoolQueryCount", "PoolQueryOne", "PoolScrubRun", "SystemInfo"}; total != 10 || !reflect.DeepEqual(uncalled, want) {
-		t.Errorf("Uncalled = %v of %d, want %v of 10", uncalled, total, want)
+	if want := []string{"AuthLoginEx", "ConfigSave", "ConfigUpload", "PoolCreate", "PoolQueryCount", "PoolQueryOne", "PoolScrubRun", "PoolSetQuota", "SystemInfo"}; total != 11 || !reflect.DeepEqual(uncalled, want) {
+		t.Errorf("Uncalled = %v of %d, want %v of 11", uncalled, total, want)
 	}
 
 	// counted through one field, only what that field's client reaches names a method: with two services in one repository, the
@@ -1332,8 +1349,8 @@ func TestCalls(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if want := []string{"AuthLoginEx", "ConfigSave", "ConfigUpload", "CoreBulk", "PoolCreate", "PoolQueryCount", "PoolQueryOne", "PoolScrubRun"}; total != 10 || !reflect.DeepEqual(uncalled, want) {
-		t.Errorf("UncalledOn nas = %v of %d, want %v of 10", uncalled, total, want)
+	if want := []string{"AuthLoginEx", "ConfigSave", "ConfigUpload", "CoreBulk", "PoolCreate", "PoolQueryCount", "PoolQueryOne", "PoolScrubRun", "PoolSetQuota"}; total != 11 || !reflect.DeepEqual(uncalled, want) {
+		t.Errorf("UncalledOn nas = %v of %d, want %v of 11", uncalled, total, want)
 	}
 }
 
